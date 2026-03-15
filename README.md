@@ -7,7 +7,7 @@
 
 
 <p align="center">
-  <b><i><font size="4">Just chat with <a href="#openclaw-integration">OpenClaw</a>: "Research X" → done.</font></i></b>
+  <b><i><font size="5">Just chat with <a href="#openclaw-integration">OpenClaw</a>: "Research X" → done.</font></i></b>
 </p>
 
 <p align="center">
