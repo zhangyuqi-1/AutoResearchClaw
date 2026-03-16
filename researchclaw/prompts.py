@@ -229,6 +229,7 @@ SECTION_WORD_TARGETS: dict[str, tuple[int, int]] = {
     "discussion": (400, 600),
     "limitations": (200, 300),
     "conclusion": (200, 300),
+    "broader impact": (200, 400),
 }
 
 # Aliases mapping heading variants to canonical names in SECTION_WORD_TARGETS.
@@ -249,6 +250,9 @@ _SECTION_TARGET_ALIASES: dict[str, str] = {
     "prior work": "related work",
     "limitation": "limitations",
     "limitations and future work": "limitations",
+    "broader impacts": "broader impact",
+    "societal impact": "broader impact",
+    "ethical considerations": "broader impact",
 }
 
 # -- Reusable blocks -----------------------------------------------------
@@ -592,19 +596,20 @@ _DEFAULT_BLOCKS: dict[str, str] = {
         "- (5) Implication/takeaway\n"
         "- Do NOT list per-seed ranges (e.g., '0.71-0.73 across seeds') — use mean +/- std\n"
         "- Do NOT repeat numbers that appear in the Results section — pick the 2-3 most impactful\n\n"
-        "INTRODUCTION (4 paragraphs):\n"
-        "- Paragraph 1: Problem motivation (why this matters)\n"
-        "- Paragraph 2: What exists and why it falls short\n"
-        "- Paragraph 3: Your approach and key insight\n"
-        "- Paragraph 4: Contributions (2-3 bullet points)\n\n"
+        "INTRODUCTION (4 paragraphs, 800-1000 words, cite 8-12 references):\n"
+        "Paragraph 1: Problem motivation (why this matters). "
+        "Paragraph 2: What exists and why it falls short. "
+        "Paragraph 3: Your approach and key insight. "
+        "Paragraph 4: Contributions (2-3 bullet points allowed here ONLY).\n\n"
         "RELATED WORK:\n"
-        "- Organize by sub-topic, not chronologically\n"
-        "- End each paragraph with how your work differs\n"
-        "- Cite at least 15 references, all directly relevant\n\n"
+        "Organize by sub-topic, not chronologically. "
+        "End each paragraph with how YOUR work differs from the cited work. "
+        "Cite at least 15 references, all directly relevant.\n\n"
         "METHOD:\n"
-        "- Full algorithm description (pseudocode or step-by-step)\n"
-        "- All hyperparameters with values and justification\n"
-        "- Architecture details sufficient for reproduction\n\n"
+        "Write as flowing narrative prose (NOT bullet points). "
+        "Include full algorithm description with pseudocode or step-by-step. "
+        "State all hyperparameters with values and justification. "
+        "Provide architecture details sufficient for reproduction.\n\n"
         "RESULTS:\n"
         "- Do NOT repeat the same number more than twice across the paper\n"
         "- Each number in a table should be discussed AT MOST once in text\n"
@@ -823,19 +828,20 @@ _DEFAULT_BLOCKS: dict[str, str] = {
         "### Example: BAD vs GOOD Method Description\n"
         "BAD (bullet-list style):\n"
         "  'Our method has three components:\n"
-        "   - A feature extractor using ResNet-50\n"
-        "   - A prototype memory bank with 100 slots\n"
-        "   - A drift detector using MMD test'\n\n"
+        "   - Component A\n"
+        "   - Component B\n"
+        "   - Component C'\n\n"
         "GOOD (narrative style):\n"
-        "  'Our method builds on the insight that catastrophic forgetting in continual\n"
-        "   meta-learning stems from distributional shift in the feature space. To address\n"
-        "   this, we introduce ProtoMem, a three-stage framework. First, a shared feature\n"
-        "   extractor (ResNet-50) maps inputs to a 512-d embedding space. These embeddings\n"
-        "   feed into a prototype memory bank maintaining 100 class prototypes via exponential\n"
-        "   moving average, enabling knowledge preservation without storing raw examples.\n"
-        "   Crucially, we augment this with an online drift detector based on the Maximum\n"
-        "   Mean Discrepancy test (Gretton et al., 2012), triggering selective memory\n"
-        "   consolidation when input distribution shifts beyond a calibrated threshold.'\n"
+        "  'Our method builds on the insight that [core problem] stems from\n"
+        "   [root cause identified in Section 2]. To address this, we introduce\n"
+        "   [MethodName], a [N]-stage framework. First, [Stage 1] maps inputs\n"
+        "   to [representation]. These representations feed into [Stage 2],\n"
+        "   enabling [benefit] without [drawback of prior approaches].\n"
+        "   Crucially, we augment this with [Stage 3] based on [technical\n"
+        "   foundation] (cite original paper), triggering [mechanism] when\n"
+        "   [condition is met].'\n"
+        "  NOTE: Replace all [placeholders] with YOUR actual method details.\n"
+        "  Do NOT copy this template verbatim.\n"
     ),
     # IMP-31: Anti-hedging rules
     "anti_hedging_rules": (
