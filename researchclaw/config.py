@@ -27,7 +27,7 @@ KB_SUBDIRS = (
 )
 PROJECT_MODES = {"docs-first", "semi-auto", "full-auto"}
 KB_BACKENDS = {"markdown", "obsidian"}
-EXPERIMENT_MODES = {"simulated", "sandbox", "docker", "ssh_remote"}
+EXPERIMENT_MODES = {"simulated", "sandbox", "docker", "ssh_remote", "colab_drive"}
 
 
 def _get_by_path(data: dict[str, Any], dotted_key: str) -> Any:
@@ -148,8 +148,28 @@ class SandboxConfig:
 @dataclass(frozen=True)
 class SshRemoteConfig:
     host: str = ""
+    user: str = ""
+    port: int = 22
+    key_path: str = ""
     gpu_ids: tuple[int, ...] = ()
     remote_workdir: str = "/tmp/researchclaw_experiments"
+    remote_python: str = "python3"
+    setup_commands: tuple[str, ...] = ()
+    use_docker: bool = False
+    docker_image: str = "researchclaw/experiment:latest"
+    docker_network_policy: str = "none"
+    docker_memory_limit_mb: int = 8192
+    docker_shm_size_mb: int = 2048
+
+
+@dataclass(frozen=True)
+class ColabDriveConfig:
+    """Configuration for Google Drive-based async Colab execution."""
+
+    drive_root: str = ""  # local mount path, e.g. ~/Google Drive/MyDrive/researchclaw
+    poll_interval_sec: int = 30
+    timeout_sec: int = 3600
+    setup_script: str = ""  # commands to run before experiment, written to setup.sh
 
 
 @dataclass(frozen=True)
@@ -233,6 +253,7 @@ class ExperimentConfig:
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     docker: DockerSandboxConfig = field(default_factory=DockerSandboxConfig)
     ssh_remote: SshRemoteConfig = field(default_factory=SshRemoteConfig)
+    colab_drive: ColabDriveConfig = field(default_factory=ColabDriveConfig)
     code_agent: CodeAgentConfig = field(default_factory=CodeAgentConfig)
     benchmark_agent: BenchmarkAgentConfig = field(default_factory=BenchmarkAgentConfig)
     figure_agent: FigureAgentConfig = field(default_factory=FigureAgentConfig)
@@ -456,6 +477,7 @@ def _parse_experiment_config(data: dict[str, Any]) -> ExperimentConfig:
     sandbox_data = data.get("sandbox") or {}
     docker_data = data.get("docker") or {}
     ssh_data = data.get("ssh_remote") or {}
+    colab_data = data.get("colab_drive") or {}
     return ExperimentConfig(
         mode=data.get("mode", "simulated"),
         time_budget_sec=int(data.get("time_budget_sec", 300)),
@@ -487,10 +509,26 @@ def _parse_experiment_config(data: dict[str, Any]) -> ExperimentConfig:
         ),
         ssh_remote=SshRemoteConfig(
             host=ssh_data.get("host", ""),
+            user=ssh_data.get("user", ""),
+            port=int(ssh_data.get("port", 22)),
+            key_path=ssh_data.get("key_path", ""),
             gpu_ids=tuple(int(g) for g in ssh_data.get("gpu_ids", ())),
             remote_workdir=ssh_data.get(
                 "remote_workdir", "/tmp/researchclaw_experiments"
             ),
+            remote_python=ssh_data.get("remote_python", "python3"),
+            setup_commands=tuple(ssh_data.get("setup_commands") or ()),
+            use_docker=bool(ssh_data.get("use_docker", False)),
+            docker_image=ssh_data.get("docker_image", "researchclaw/experiment:latest"),
+            docker_network_policy=ssh_data.get("docker_network_policy", "none"),
+            docker_memory_limit_mb=int(ssh_data.get("docker_memory_limit_mb", 8192)),
+            docker_shm_size_mb=int(ssh_data.get("docker_shm_size_mb", 2048)),
+        ),
+        colab_drive=ColabDriveConfig(
+            drive_root=colab_data.get("drive_root", ""),
+            poll_interval_sec=int(colab_data.get("poll_interval_sec", 30)),
+            timeout_sec=int(colab_data.get("timeout_sec", 3600)),
+            setup_script=colab_data.get("setup_script", ""),
         ),
         code_agent=_parse_code_agent_config(data.get("code_agent") or {}),
         benchmark_agent=_parse_benchmark_agent_config(
