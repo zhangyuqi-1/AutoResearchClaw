@@ -172,7 +172,7 @@ def _request_with_retry(
                 continue
 
             if exc.code in (500, 502, 503, 504):
-                wait = 2 ** attempt
+                wait = min(2 ** attempt, _MAX_WAIT_SEC)
                 jitter = random.uniform(0, wait * 0.2)
                 logger.warning(
                     "OpenAlex HTTP %d. Retry %d/%d in %.0fs...",
