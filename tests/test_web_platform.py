@@ -647,7 +647,7 @@ class TestFastAPIApp:
             resp = await ac.get("/api/pipeline/stages")
             assert resp.status_code == 200
             stages = resp.json()["stages"]
-            assert len(stages) == 23
+            assert len(stages) == 24
 
     @pytest.mark.asyncio
     async def test_runs_list(self, app: object) -> None:

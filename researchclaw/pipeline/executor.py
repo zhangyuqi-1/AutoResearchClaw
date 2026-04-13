@@ -178,6 +178,9 @@ from researchclaw.pipeline.stage_impls._review_publish import (  # noqa: E402
     _remove_bibtex_entries,
     _remove_citations_from_text,
 )
+from researchclaw.pipeline.stage_impls._final_editorial_repair import (  # noqa: E402
+    _execute_final_editorial_repair,
+)
 
 
 def _get_hitl_session(adapters: AdapterBundle) -> Any:
@@ -575,6 +578,7 @@ _STAGE_EXECUTORS: dict[Stage, Callable[..., StageResult]] = {
     Stage.KNOWLEDGE_ARCHIVE: _execute_knowledge_archive,
     Stage.EXPORT_PUBLISH: _execute_export_publish,
     Stage.CITATION_VERIFY: _execute_citation_verify,
+    Stage.FINAL_EDITORIAL_REPAIR: _execute_final_editorial_repair,
 }
 
 

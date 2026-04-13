@@ -223,7 +223,30 @@ def test_rcconfig_from_dict_happy_path(tmp_path: Path):
     assert isinstance(config, RCConfig)
     assert config.project.name == "demo"
     assert config.research.domains == ("ml", "agents")
+    assert config.research.paper_title == ""
     assert config.llm.fallback_models == ("gpt-4o-mini", "gpt-4o")
+
+
+def test_rcconfig_from_dict_parses_paper_title(tmp_path: Path):
+    data = _valid_config_data()
+    data["research"]["paper_title"] = "Exact Configured Paper Title"
+
+    config = RCConfig.from_dict(data, project_root=tmp_path, check_paths=False)
+
+    assert config.research.paper_title == "Exact Configured Paper Title"
+
+
+def test_rcconfig_from_dict_parses_editorial_repair_mode(tmp_path: Path):
+    data = _valid_config_data()
+    data["experiment"]["editorial_repair"] = {
+        "mode": "publish_first",
+        "max_iterations": 5,
+    }
+
+    config = RCConfig.from_dict(data, project_root=tmp_path, check_paths=False)
+
+    assert config.experiment.editorial_repair.mode == "publish_first"
+    assert config.experiment.editorial_repair.max_iterations == 5
 
 
 def test_rcconfig_from_dict_parses_llm_wire_api(tmp_path: Path):

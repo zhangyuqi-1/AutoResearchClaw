@@ -88,6 +88,7 @@ _STAGE_CRITICALITY: dict[int, float] = {
     21: 0.1,  # KNOWLEDGE_ARCHIVE
     22: 0.3,  # EXPORT_PUBLISH
     23: 0.4,  # CITATION_VERIFY
+    24: 0.5,  # FINAL_EDITORIAL_REPAIR
 }
 
 

@@ -1,4 +1,4 @@
-"""23-stage ResearchClaw pipeline state machine.
+"""24-stage ResearchClaw pipeline state machine.
 
 Defines the stage sequence, status transitions, gate logic, and rollback rules.
 Migrated from arc/state_machine.py (19 stages) with the following changes:
@@ -60,6 +60,7 @@ class Stage(IntEnum):
     KNOWLEDGE_ARCHIVE = 21
     EXPORT_PUBLISH = 22
     CITATION_VERIFY = 23
+    FINAL_EDITORIAL_REPAIR = 24
 
 
 class StageStatus(str, Enum):
@@ -175,6 +176,7 @@ PHASE_MAP: dict[str, tuple[Stage, ...]] = {
         Stage.KNOWLEDGE_ARCHIVE,
         Stage.EXPORT_PUBLISH,
         Stage.CITATION_VERIFY,
+        Stage.FINAL_EDITORIAL_REPAIR,
     ),
 }
 

@@ -43,6 +43,7 @@ _STAGE_SUMMARIES: dict[int, str] = {
     21: "Knowledge archived. Review the archive for completeness.",
     22: "Paper exported. Check the final format (LaTeX/Markdown).",
     23: "Citations verified. Review any flagged or suspicious citations.",
+    24: "Editorial repair completed. Review figure placement, local explanations, and final readability.",
 }
 
 
@@ -194,6 +195,13 @@ def _dynamic_stage_analysis(stage_num: int, run_dir: Path) -> list[str]:
                 lines.append(f"\nCitations: {verified}/{total} verified")
                 if hallucinated > 0:
                     lines.append(f"⚠ {hallucinated} potentially hallucinated citations")
+
+        elif stage_num == 24:
+            review = stage_dir / "editorial_review.json"
+            if review.exists():
+                data = json.loads(review.read_text(encoding="utf-8"))
+                count = data.get("initial_issue_count", 0)
+                lines.append(f"\nEditorial issues reviewed: {count}")
 
     except Exception:
         pass

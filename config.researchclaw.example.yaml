@@ -4,6 +4,7 @@ project:
 
 research:
   topic: "Your research topic here"
+  paper_title: ""  # Optional exact paper title override (empty = let the model generate one)
   domains:
     - "machine-learning"
   daily_paper_count: 10

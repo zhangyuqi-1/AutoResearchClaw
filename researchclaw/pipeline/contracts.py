@@ -1,4 +1,4 @@
-"""Stage I/O contracts for the 23-stage ResearchClaw pipeline.
+"""Stage I/O contracts for the 24-stage ResearchClaw pipeline.
 
 Each StageContract declares:
   - input_files: artifacts this stage reads (produced by prior stages)
@@ -202,5 +202,12 @@ CONTRACTS: dict[Stage, StageContract] = {
         output_files=("verification_report.json", "references_verified.bib"),
         dod="All citations verified against real APIs; hallucinated refs flagged",
         error_code="E23_VERIFY_FAIL",
+    ),
+    Stage.FINAL_EDITORIAL_REPAIR: StageContract(
+        stage=Stage.FINAL_EDITORIAL_REPAIR,
+        input_files=("paper_final.md", "verification_report.json"),
+        output_files=("paper_repaired.md", "editorial_review.json"),
+        dod="Final paper repaired for figure placement, explanations, and readability",
+        error_code="E24_EDITORIAL_REPAIR_FAIL",
     ),
 }

@@ -78,11 +78,15 @@ def _paper_section(run_dir: Path) -> str:
     else:
         lines.append("- Draft: not generated")
 
-    final_path = run_dir / "stage-22" / "paper_final.md"
+    final_path = run_dir / "stage-24" / "paper_repaired.md"
+    if not final_path.exists():
+        final_path = run_dir / "stage-22" / "paper_final.md"
     if final_path.exists():
         lines.append(f"- Final: `{final_path.relative_to(run_dir)}`")
 
-    tex_path = run_dir / "stage-22" / "paper.tex"
+    tex_path = run_dir / "stage-24" / "paper_repaired.tex"
+    if not tex_path.exists():
+        tex_path = run_dir / "stage-22" / "paper.tex"
     if tex_path.exists():
         lines.append(f"- LaTeX: `{tex_path.relative_to(run_dir)}`")
 

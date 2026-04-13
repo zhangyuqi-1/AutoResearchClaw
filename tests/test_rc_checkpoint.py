@@ -41,7 +41,7 @@ class TestCheckpoint:
         assert read_checkpoint(tmp_path) is None
 
     def test_read_checkpoint_last_stage(self, tmp_path: Path):
-        _write_checkpoint(tmp_path, Stage.CITATION_VERIFY, "test-run")
+        _write_checkpoint(tmp_path, Stage.FINAL_EDITORIAL_REPAIR, "test-run")
         assert read_checkpoint(tmp_path) is None
 
     def test_read_checkpoint_corrupted(self, tmp_path: Path):
@@ -76,8 +76,8 @@ class TestNoncriticalStages:
     def test_paper_draft_is_critical(self):
         assert Stage.PAPER_DRAFT not in NONCRITICAL_STAGES
 
-    def test_stage_sequence_still_ends_with_citation_verify(self):
-        assert STAGE_SEQUENCE[-1] == Stage.CITATION_VERIFY
+    def test_stage_sequence_still_ends_with_final_editorial_repair(self):
+        assert STAGE_SEQUENCE[-1] == Stage.FINAL_EDITORIAL_REPAIR
 
 
 class TestContentMetrics:

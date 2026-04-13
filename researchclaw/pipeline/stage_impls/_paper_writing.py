@@ -334,6 +334,7 @@ def _write_paper_sections(
     topic_constraint: str,
     exp_metrics_instruction: str,
     citation_instruction: str,
+    exact_title_instruction: str,
     outline: str,
     model_name: str = "",
 ) -> str:
@@ -398,6 +399,7 @@ def _write_paper_sections(
         f"{preamble}\n\n"
         f"{topic_constraint}"
         f"{citation_instruction}\n\n"
+        f"{exact_title_instruction}"
         f"{title_guidelines}\n\n"
         f"{academic_style_guide}\n"
         f"{narrative_writing_rules}\n"
@@ -1324,6 +1326,16 @@ def _execute_paper_draft(
                 "Cite specific metrics with their actual values.\n"
             )
 
+    paper_title = (getattr(config.research, "paper_title", "") or "").strip()
+    exact_title_instruction = ""
+    if paper_title:
+        exact_title_instruction = (
+            "\n\n## TITLE OVERRIDE (Hard Constraint)\n"
+            f'- Use EXACTLY this paper title: "{paper_title}"\n'
+            "- Do NOT paraphrase, shorten, expand, or replace it.\n"
+            "- Output that exact text under the `## Title` section.\n"
+        )
+
     # Collect raw experiment stdout metrics as hard constraint for the paper
     raw_metrics_block, _has_parsed_metrics = _collect_raw_experiment_metrics(run_dir)
     if raw_metrics_block:
@@ -2011,6 +2023,7 @@ def _execute_paper_draft(
             topic_constraint=topic_constraint,
             exp_metrics_instruction=exp_metrics_instruction,
             citation_instruction=citation_instruction,
+            exact_title_instruction=exact_title_instruction,
             outline=outline,
             model_name=config.llm.primary_model,
         )

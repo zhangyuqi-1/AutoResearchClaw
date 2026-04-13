@@ -93,7 +93,7 @@ def test_execute_pipeline_runs_stages_in_sequence(
         adapters=adapters,
     )
     assert seen == list(STAGE_SEQUENCE)
-    assert len(results) == 23
+    assert len(results) == 24
     assert all(r.status == StageStatus.DONE for r in results)
 
 
@@ -203,7 +203,7 @@ def test_execute_pipeline_continues_after_gate_when_stop_on_gate_disabled(
         adapters=adapters,
         stop_on_gate=False,
     )
-    assert len(results) == 23
+    assert len(results) == 24
     assert any(item.status == StageStatus.BLOCKED_APPROVAL for item in results)
 
 
@@ -333,8 +333,8 @@ def test_execute_pipeline_writes_kb_entries_when_kb_root_provided(
         adapters=adapters,
         kb_root=kb_root,
     )
-    assert len(results) == 23
-    assert len(calls) == 23
+    assert len(results) == 24
+    assert len(calls) == 24
     assert calls[0] == (1, "topic_init", "run-kb")
 
 
@@ -624,8 +624,8 @@ def test_proceed_decision_does_not_trigger_rollback(
         config=rc_config,
         adapters=adapters,
     )
-    # Should be exactly 23 stages, no rollback
-    assert len(seen) == 23
+    # Should be exactly 24 stages, no rollback
+    assert len(seen) == 24
     assert not (run_dir / "decision_history.json").exists()
 
 
@@ -646,12 +646,13 @@ def test_record_decision_history_appends(run_dir: Path) -> None:
 
 
 def _setup_stage_artifacts(run_dir: Path) -> None:
-    """Create typical stage-22 and stage-23 output files for testing."""
+    """Create typical stage-22, stage-23, and stage-24 output files for testing."""
     s22 = run_dir / "stage-22"
     s22.mkdir(parents=True, exist_ok=True)
     (s22 / "paper_final.md").write_text("# My Paper\nContent here.", encoding="utf-8")
     (s22 / "paper.tex").write_text("\\documentclass{article}\n\\begin{document}\nHello\n\\end{document}", encoding="utf-8")
     (s22 / "references.bib").write_text("@article{smith2024,\n  title={Test}\n}", encoding="utf-8")
+    (s22 / "sanitization_report.json").write_text("{}", encoding="utf-8")
     code_dir = s22 / "code"
     code_dir.mkdir()
     (code_dir / "main.py").write_text("print('hello')", encoding="utf-8")
@@ -665,6 +666,17 @@ def _setup_stage_artifacts(run_dir: Path) -> None:
     (s23 / "verification_report.json").write_text(
         json.dumps({"summary": {"total": 5, "verified": 4}}), encoding="utf-8"
     )
+
+    s24 = run_dir / "stage-24"
+    s24.mkdir(parents=True, exist_ok=True)
+    (s24 / "paper_repaired.md").write_text("# My Paper (repaired)\nFinal content.", encoding="utf-8")
+    (s24 / "paper_repaired.tex").write_text("\\documentclass{article}\n\\begin{document}\nHello repaired\n\\end{document}", encoding="utf-8")
+    (s24 / "paper_repaired.pdf").write_bytes(b"%PDF-1.4\n")
+    (s24 / "paper_repaired.docx").write_bytes(b"PK\x03\x04docx")
+    (s24 / "references.bib").write_text("@article{smith2024,\n  title={Test}\n}", encoding="utf-8")
+    charts24 = s24 / "charts"
+    charts24.mkdir()
+    (charts24 / "fig_main.png").write_bytes(b"png")
 
 
 def test_package_deliverables_collects_all_artifacts(
@@ -691,11 +703,47 @@ def test_package_deliverables_prefers_verified_versions(
     _setup_stage_artifacts(run_dir)
     rc_runner._package_deliverables(run_dir, "run-verified", rc_config)
     dest = run_dir / "deliverables"
-    # Should contain verified content (from stage 23), not base (from stage 22)
+    # Should contain verified content (from stage 23), not base content
     paper = (dest / "paper_final.md").read_text(encoding="utf-8")
     assert "verified" in paper
     bib = (dest / "references.bib").read_text(encoding="utf-8")
     assert "smith2024" in bib
+
+
+def test_package_deliverables_uses_stage22_tex(
+    run_dir: Path, rc_config: RCConfig
+) -> None:
+    _setup_stage_artifacts(run_dir)
+    rc_runner._package_deliverables(run_dir, "run-stage22-tex", rc_config)
+    dest = run_dir / "deliverables"
+    tex = (dest / "paper.tex").read_text(encoding="utf-8")
+    assert "Hello" in tex
+
+
+def test_package_stage24_deliverables_collects_stage24_outputs(
+    run_dir: Path, rc_config: RCConfig
+) -> None:
+    _setup_stage_artifacts(run_dir)
+    dest = rc_runner._package_stage24_deliverables(run_dir, "run-stage24")
+    assert dest == run_dir / "deliverables_stage24"
+    paper = (dest / "paper_final.md").read_text(encoding="utf-8")
+    tex = (dest / "paper.tex").read_text(encoding="utf-8")
+    docx = dest / "paper_final.docx"
+    assert "repaired" in paper
+    assert docx.exists()
+    assert "Hello repaired" in tex
+    assert (dest / "verification_report.json").exists()
+    assert (dest / "sanitization_report.json").exists()
+    assert (run_dir / "My_Paper__repaired_.zip").exists()
+
+
+def test_package_stage24_deliverables_returns_none_when_stage24_missing(
+    run_dir: Path, rc_config: RCConfig
+) -> None:
+    s22 = run_dir / "stage-22"
+    s22.mkdir(parents=True, exist_ok=True)
+    (s22 / "paper_final.md").write_text("# Base Paper", encoding="utf-8")
+    assert rc_runner._package_stage24_deliverables(run_dir, "run-stage24-missing") is None
 
 
 def test_package_deliverables_falls_back_to_stage22(
@@ -844,8 +892,8 @@ def test_degraded_quality_gate_continues_pipeline(
         config=rc_config,
         adapters=adapters,
     )
-    # All 23 stages should execute (not stopped at quality gate)
-    assert len(results) == 23
+    # All 24 stages should execute (not stopped at quality gate)
+    assert len(results) == 24
     assert seen == list(STAGE_SEQUENCE)
     # Quality gate result should have decision="degraded"
     qg_result = [r for r in results if r.stage == Stage.QUALITY_GATE][0]

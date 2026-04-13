@@ -20,8 +20,8 @@ from researchclaw.pipeline.stages import (
 )
 
 
-def test_stage_enum_has_exactly_23_members():
-    assert len(Stage) == 23
+def test_stage_enum_has_exactly_24_members():
+    assert len(Stage) == 24
 
 
 @pytest.mark.parametrize(
@@ -31,16 +31,17 @@ def test_stage_values_follow_sequence_order(index: int, stage: Stage):
     assert int(stage) == index
 
 
-def test_stage_sequence_contains_all_23_stages_in_order():
-    assert len(STAGE_SEQUENCE) == 23
+def test_stage_sequence_contains_all_24_stages_in_order():
+    assert len(STAGE_SEQUENCE) == 24
     assert STAGE_SEQUENCE[0] is Stage.TOPIC_INIT
-    assert STAGE_SEQUENCE[-1] is Stage.CITATION_VERIFY
+    assert STAGE_SEQUENCE[-1] is Stage.FINAL_EDITORIAL_REPAIR
     assert tuple(Stage) == STAGE_SEQUENCE
 
 
 def test_next_stage_boundary_values():
     assert NEXT_STAGE[Stage.TOPIC_INIT] is Stage.PROBLEM_DECOMPOSE
     assert NEXT_STAGE[Stage.EXPORT_PUBLISH] is Stage.CITATION_VERIFY
+    assert NEXT_STAGE[Stage.CITATION_VERIFY] is Stage.FINAL_EDITORIAL_REPAIR
 
 
 def test_previous_stage_boundary_values():
@@ -102,12 +103,13 @@ def test_phase_map_has_8_phases_with_expected_membership():
         Stage.KNOWLEDGE_ARCHIVE,
         Stage.EXPORT_PUBLISH,
         Stage.CITATION_VERIFY,
+        Stage.FINAL_EDITORIAL_REPAIR,
     )
 
 
 def test_phase_map_covers_all_stages_exactly_once():
     flattened = tuple(stage for stages in PHASE_MAP.values() for stage in stages)
-    assert len(flattened) == 23
+    assert len(flattened) == 24
     assert set(flattened) == set(Stage)
 
 

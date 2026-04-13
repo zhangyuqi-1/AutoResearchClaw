@@ -135,6 +135,7 @@ class ProjectConfig:
 @dataclass(frozen=True)
 class ResearchConfig:
     topic: str
+    paper_title: str = ""
     domains: tuple[str, ...] = ()
     daily_paper_count: int = 0
     quality_threshold: float = 0.0
@@ -358,7 +359,7 @@ class FigureAgentConfig:
 
     enabled: bool = True
     # Planner
-    min_figures: int = 3
+    min_figures: int = 4
     max_figures: int = 8
     # Orchestrator
     max_iterations: int = 3  # max CodeGen→Renderer→Critic retry loops
@@ -419,6 +420,21 @@ class CliAgentConfig:
 
 
 @dataclass(frozen=True)
+class EditorialRepairConfig:
+    """Configuration for Stage 24 final editorial repair."""
+
+    enabled: bool = True
+    provider: str = "codex_cli"
+    mode: str = "balanced"
+    binary_path: str = ""
+    model: str = ""
+    timeout_sec: int = 900
+    max_iterations: int = 3
+    workspace_cleanup: bool = True
+    extra_args: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
     mode: str = "simulated"
     time_budget_sec: int = 300
@@ -438,6 +454,7 @@ class ExperimentConfig:
     figure_agent: FigureAgentConfig = field(default_factory=FigureAgentConfig)
     repair: ExperimentRepairConfig = field(default_factory=ExperimentRepairConfig)
     cli_agent: CliAgentConfig = field(default_factory=CliAgentConfig)
+    editorial_repair: EditorialRepairConfig = field(default_factory=EditorialRepairConfig)
 
 
 @dataclass(frozen=True)
@@ -778,6 +795,7 @@ class RCConfig:
             ),
             research=ResearchConfig(
                 topic=research["topic"],
+                paper_title=str(research.get("paper_title", "")),
                 domains=tuple(research.get("domains") or ()),
                 daily_paper_count=int(research.get("daily_paper_count", 0)),
                 quality_threshold=float(research.get("quality_threshold", 0.0)),
@@ -1075,6 +1093,7 @@ def _parse_experiment_config(data: dict[str, Any]) -> ExperimentConfig:
         figure_agent=_parse_figure_agent_config(data.get("figure_agent") or {}),
         repair=_parse_experiment_repair_config(data.get("repair") or {}),
         cli_agent=_parse_cli_agent_config(data.get("cli_agent") or {}),
+        editorial_repair=_parse_editorial_repair_config(data.get("editorial_repair") or {}),
     )
 
 
@@ -1102,7 +1121,7 @@ def _parse_figure_agent_config(data: dict[str, Any]) -> FigureAgentConfig:
     use_docker_raw = data.get("use_docker", None)
     return FigureAgentConfig(
         enabled=bool(data.get("enabled", True)),
-        min_figures=_safe_int(data.get("min_figures"), 3),
+        min_figures=_safe_int(data.get("min_figures"), 4),
         max_figures=_safe_int(data.get("max_figures"), 8),
         max_iterations=_safe_int(data.get("max_iterations"), 3),
         render_timeout_sec=_safe_int(data.get("render_timeout_sec"), 30),
@@ -1139,6 +1158,22 @@ def _parse_cli_agent_config(data: dict[str, Any]) -> CliAgentConfig:
         model=data.get("model", ""),
         max_budget_usd=_safe_float(data.get("max_budget_usd"), 5.0),
         timeout_sec=_safe_int(data.get("timeout_sec"), 600),
+        extra_args=tuple(data.get("extra_args") or ()),
+    )
+
+
+def _parse_editorial_repair_config(data: dict[str, Any]) -> EditorialRepairConfig:
+    if not data:
+        return EditorialRepairConfig()
+    return EditorialRepairConfig(
+        enabled=bool(data.get("enabled", True)),
+        provider=str(data.get("provider", "codex_cli")),
+        mode=str(data.get("mode", "balanced")),
+        binary_path=str(data.get("binary_path", "")),
+        model=str(data.get("model", "")),
+        timeout_sec=_safe_int(data.get("timeout_sec"), 900),
+        max_iterations=_safe_int(data.get("max_iterations"), 3),
+        workspace_cleanup=bool(data.get("workspace_cleanup", True)),
         extra_args=tuple(data.get("extra_args") or ()),
     )
 

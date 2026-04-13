@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import threading
 import time as _time
+import zipfile
 from pathlib import Path
 
 from researchclaw.adapters import AdapterBundle
@@ -850,6 +851,13 @@ def execute_pipeline(
     except Exception:  # noqa: BLE001
         logger.warning("Deliverables packaging failed (non-blocking)")
 
+    try:
+        deliverables24_dir = _package_stage24_deliverables(run_dir, run_id)
+        if deliverables24_dir is not None:
+            print(f"[{run_id}] Stage-24 deliverables packaged → {deliverables24_dir}")
+    except Exception:  # noqa: BLE001
+        logger.warning("Stage-24 deliverables packaging failed (non-blocking)")
+
     # --- HITL: Finalize session state ---
     try:
         hitl_session = getattr(adapters, "hitl", None)
@@ -1161,6 +1169,132 @@ def _package_deliverables(
         "Deliverables packaged: %s (%d items)",
         dest,
         len(packaged),
+    )
+    return dest
+
+
+def _package_stage24_deliverables(
+    run_dir: Path,
+    run_id: str,
+) -> Path | None:
+    """Package a Stage-24-first deliverables bundle plus zip archive."""
+    stage24_dir = run_dir / "stage-24"
+    if not stage24_dir.is_dir():
+        return None
+
+    required_stage24_files = {
+        "paper_final.md": stage24_dir / "paper_repaired.md",
+        "paper.tex": stage24_dir / "paper_repaired.tex",
+        "paper.pdf": stage24_dir / "paper_repaired.pdf",
+        "paper_final.docx": stage24_dir / "paper_repaired.docx",
+        "references.bib": stage24_dir / "references.bib",
+    }
+    charts_src = stage24_dir / "charts"
+    if not all(
+        path.is_file() and path.stat().st_size > 0
+        for path in required_stage24_files.values()
+    ):
+        logger.info("Stage-24 deliverables skipped: required repaired files missing")
+        return None
+    if not charts_src.is_dir() or not any(charts_src.iterdir()):
+        logger.info("Stage-24 deliverables skipped: charts missing")
+        return None
+
+    dest = run_dir / "deliverables_stage24"
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    packaged: list[str] = []
+    for out_name, src in required_stage24_files.items():
+        shutil.copy2(src, dest / out_name)
+        packaged.append(out_name)
+    shutil.copytree(charts_src, dest / "charts")
+    packaged.append("charts/")
+
+    code_src = run_dir / "stage-22" / "code"
+    if code_src.is_dir():
+        shutil.copytree(code_src, dest / "code")
+        packaged.append("code/")
+
+    verification_src = run_dir / "stage-23" / "verification_report.json"
+    if verification_src.is_file() and verification_src.stat().st_size > 0:
+        shutil.copy2(verification_src, dest / "verification_report.json")
+        packaged.append("verification_report.json")
+
+    sanitization_src = run_dir / "stage-22" / "sanitization_report.json"
+    if sanitization_src.is_file() and sanitization_src.stat().st_size > 0:
+        shutil.copy2(sanitization_src, dest / "sanitization_report.json")
+        packaged.append("sanitization_report.json")
+
+    for style_src in sorted((run_dir / "stage-22").glob("*.sty")):
+        if style_src.is_file():
+            shutil.copy2(style_src, dest / style_src.name)
+            packaged.append(style_src.name)
+    for style_src in sorted((run_dir / "stage-22").glob("*.bst")):
+        if style_src.is_file():
+            shutil.copy2(style_src, dest / style_src.name)
+            packaged.append(style_src.name)
+
+    optional_files = {
+        "codex_review.json": stage24_dir / "codex_review.json",
+        "editorial_review.json": stage24_dir / "editorial_review.json",
+        "editorial_iterations.json": stage24_dir / "editorial_iterations.json",
+        "editorial_final_assessment.json": stage24_dir / "editorial_final_assessment.json",
+        "docx_quality.json": stage24_dir / "docx_quality.json",
+    }
+    for out_name, src in optional_files.items():
+        if src.is_file() and src.stat().st_size > 0:
+            shutil.copy2(src, dest / out_name)
+            packaged.append(out_name)
+
+    manifest = {
+        "run_id": run_id,
+        "source_stage": 24,
+        "files": packaged,
+        "generated": _utcnow_iso(),
+        "notes": {
+            "paper_final.md": "Stage-24-first final paper in Markdown format",
+            "paper_final.docx": "Stage-24-first final paper in Word format",
+            "paper.tex": "Stage-24-first LaTeX source",
+            "paper.pdf": "Stage-24-first final PDF",
+            "references.bib": "Bibliography used by the Stage-24 final paper",
+            "code/": "Experiment source code package",
+            "verification_report.json": "Citation integrity & relevance verification",
+            "sanitization_report.json": "Export-stage sanitization report",
+            "charts/": "Figure assets used by the Stage-24 final paper",
+        },
+    }
+    (dest / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+
+    archive_stem = "deliverables_stage24"
+    try:
+        from researchclaw.pipeline._helpers import _extract_paper_title, _safe_filename
+
+        title_text = required_stage24_files["paper_final.md"].read_text(encoding="utf-8")
+        title = _extract_paper_title(title_text).strip()
+        if title:
+            archive_stem = _safe_filename(title)
+    except Exception:  # noqa: BLE001
+        logger.debug("Stage-24 deliverables archive title extraction failed")
+
+    archive_path = run_dir / f"{archive_stem}.zip"
+    if archive_path.exists():
+        archive_path.unlink()
+    with zipfile.ZipFile(
+        archive_path, "w", compression=zipfile.ZIP_DEFLATED
+    ) as zf:
+        for path in sorted(dest.rglob("*")):
+            if path.is_file():
+                zf.write(path, arcname=path.relative_to(run_dir))
+
+    logger.info(
+        "Stage-24 deliverables packaged: %s (%d items), archive=%s",
+        dest,
+        len(packaged),
+        archive_path,
     )
     return dest
 
@@ -1621,6 +1755,13 @@ def execute_iterative_pipeline(
             print(f"[{run_id}] Deliverables packaged →{deliverables_dir}")
     except Exception:  # noqa: BLE001
         logger.warning("Deliverables packaging failed (non-blocking)")
+
+    try:
+        deliverables24_dir = _package_stage24_deliverables(run_dir, run_id)
+        if deliverables24_dir is not None:
+            print(f"[{run_id}] Stage-24 deliverables packaged → {deliverables24_dir}")
+    except Exception:  # noqa: BLE001
+        logger.warning("Stage-24 deliverables packaging failed (non-blocking)")
 
     return summary
 

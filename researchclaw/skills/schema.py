@@ -32,6 +32,7 @@ STAGE_NAME_TO_NUMBER: dict[str, int] = {
     "knowledge_archive": 21,
     "export_publish": 22,
     "citation_verify": 23,
+    "final_editorial_repair": 24,
 }
 
 # Valid categories in the new taxonomy.

@@ -197,7 +197,8 @@ class TestSkillSchema:
     def test_stage_name_to_number(self) -> None:
         assert STAGE_NAME_TO_NUMBER["code_generation"] == 10
         assert STAGE_NAME_TO_NUMBER["paper_draft"] == 17
-        assert len(STAGE_NAME_TO_NUMBER) == 23
+        assert STAGE_NAME_TO_NUMBER["final_editorial_repair"] == 24
+        assert len(STAGE_NAME_TO_NUMBER) == 24
 
     def test_prompt_template_alias(self, sample_skill: Skill) -> None:
         assert sample_skill.prompt_template == sample_skill.body
