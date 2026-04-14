@@ -7,7 +7,7 @@
 ## 建议读取顺序
 
 1. `RESEARCHCLAW_AGENTS.md`
-2. `AGENTS_ADD.md`
+2. `AGENTS.md`
 3. 当前真实运行配置文件
 
 说明：
