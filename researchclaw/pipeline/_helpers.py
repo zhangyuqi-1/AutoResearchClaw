@@ -334,6 +334,7 @@ def _write_stage_meta(
 
 def _ensure_sandbox_deps(code: str, python_path: str) -> list[str]:
     """P7: Scan code imports and auto-install missing common packages."""
+    import os
     import subprocess as _sp
 
     imports: set[str] = set()
@@ -362,10 +363,17 @@ def _ensure_sandbox_deps(code: str, python_path: str) -> list[str]:
             if r.returncode != 0:
                 pip_name = "scikit-learn" if pkg == "sklearn" else pkg
                 logger.info("Sandbox: installing missing dependency '%s'", pip_name)
+                pip_env = os.environ.copy()
+                for proxy_key in (
+                    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                    "http_proxy", "https_proxy", "all_proxy",
+                ):
+                    pip_env.pop(proxy_key, None)
                 _sp.run(
                     [str(py_path), "-m", "pip", "install", pip_name, "--quiet"],
                     capture_output=True, timeout=120,
                     encoding="utf-8", errors="replace",
+                    env=pip_env,
                 )
                 installed.append(pip_name)
         except Exception as exc:

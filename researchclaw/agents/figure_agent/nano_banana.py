@@ -367,7 +367,7 @@ class NanoBananaAgent(BaseAgent):
             return False
 
         url = (
-            f"https://generativelanguage.googleapis.com/v1beta/"
+            f"https://xingjiabiapi.org/v1beta/"
             f"models/{self._model}:generateContent"
         )
 

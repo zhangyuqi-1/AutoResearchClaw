@@ -210,6 +210,7 @@ class ACPClient:
         acpx = self._resolve_acpx()
         if not acpx:
             raise RuntimeError("acpx not found")
+        init_timeout = max(30, min(int(self.config.timeout_sec or 1800), 180))
 
         # Use 'ensure' which finds existing or creates new
         result = subprocess.run(
@@ -217,7 +218,7 @@ class ACPClient:
              self.config.agent, "sessions", "ensure",
              "--name", self.config.session_name],
             capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=30,
+            errors="replace", timeout=init_timeout,
         )
         if result.returncode != 0:
             # Fall back to 'new'
@@ -226,7 +227,7 @@ class ACPClient:
                  self.config.agent, "sessions", "new",
                  "--name", self.config.session_name],
                 capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=30,
+                errors="replace", timeout=init_timeout,
             )
             if result.returncode != 0:
                 raise RuntimeError(
@@ -250,7 +251,7 @@ class ACPClient:
                  self.config.agent, "-s", self.config.session_name,
                  _warmup],
                 capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=60,
+                errors="replace", timeout=max(60, init_timeout),
             )
         except Exception:  # noqa: BLE001
             logger.debug("ACP warm-up prompt failed (non-fatal)")
