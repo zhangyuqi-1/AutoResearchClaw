@@ -182,7 +182,7 @@ class IntegratorAgent(BaseAgent):
             file_path = entry["file_path"]
             caption = entry.get("caption") or entry.get("title", f"Figure {fig_num}")
             refs.append(
-                f"![Figure {fig_num}: {caption}]({file_path})"
+                f"![{caption}]({file_path})"
             )
 
         return "\n\n".join(refs)

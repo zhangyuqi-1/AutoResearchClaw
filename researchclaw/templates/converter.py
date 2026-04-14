@@ -95,9 +95,12 @@ def markdown_to_latex(
 
     # Extract abstract
     abstract = _extract_abstract(sections)
+    abstract, abstract_post_blocks = _detach_abstract_media_blocks(abstract)
 
     # Build body (everything except title/abstract headings)
     body = _build_body(sections, title=title)
+    if abstract_post_blocks:
+        body = _convert_block(abstract_post_blocks) + "\n\n" + body
 
     # IMP-30: Detect and remove duplicate tables
     body = _deduplicate_tables(body)
@@ -119,7 +122,7 @@ def markdown_to_latex(
     )
     footer = template.render_footer(bib_file)
 
-    tex = preamble + "\n" + body + footer
+    tex = preamble + "\n" + body + "\n\\clearpage\n" + footer
 
     # Final sanitization pass on the complete LaTeX output
     tex = _sanitize_latex_output(tex, bib_entries=bib_entries)
@@ -767,6 +770,22 @@ def _extract_abstract(sections: list[_Section]) -> str:
 # ---------------------------------------------------------------------------
 
 _SKIP_HEADINGS = {"title", "abstract"}
+_MAIN_SECTION_HEADINGS = {
+    "introduction",
+    "background",
+    "related work",
+    "method",
+    "methods",
+    "methodology",
+    "approach",
+    "framework",
+    "experiments",
+    "evaluation",
+    "results",
+    "discussion",
+    "limitations",
+    "conclusion",
+}
 
 
 def _build_body(sections: list[_Section], *, title: str = "") -> str:
@@ -822,6 +841,16 @@ def _build_body(sections: list[_Section], *, title: str = "") -> str:
         4: "paragraph",
     }
 
+    _main_h1_count = sum(
+        sec.level == 1 and sec.heading_lower in _MAIN_SECTION_HEADINGS
+        for sec in sections
+    )
+    _main_h2_count = sum(
+        sec.level == 2 and sec.heading_lower in _MAIN_SECTION_HEADINGS
+        for sec in sections
+    )
+    _mixed_main_section_levels = _main_h1_count >= 1 and _main_h2_count >= 2
+
     parts: list[str] = []
     for sec in sections:
         # Skip title-only and abstract sections
@@ -840,6 +869,8 @@ def _build_body(sections: list[_Section], *, title: str = "") -> str:
             continue
 
         effective_level = max(1, sec.level - level_offset)
+        if _mixed_main_section_levels:
+            effective_level = max(1, sec.level - 1)
         cmd = _level_map.get(effective_level, "paragraph")
         heading_tex = _escape_latex(sec.heading)
         # Strip leading manual section numbers: "1. Introduction" → "Introduction"
@@ -912,10 +943,90 @@ _TABLE_SEP_RE = re.compile(r"^\|[-:| ]+\|$")
 
 # Markdown image pattern: ![caption](path)
 _IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$")
+_BOLD_FIGURE_CAPTION_RE = re.compile(
+    r"^\*\*\s*Figure\s+\d+[.:]?\s*\*\*\s*(?P<body>.*)\s*$"
+)
+_ITALIC_FIGURE_CAPTION_RE = re.compile(
+    r"^\*\s*Figure\s+\d+[.:]?\s*(?P<body>.*?)\*\s*$"
+)
+_BOLD_TABLE_CAPTION_RE = re.compile(
+    r"^\*\*\s*Table\s+\d+[.:]?\s*(?P<body>.*?)\s*\*\*\s*$"
+)
+_ITALIC_TABLE_CAPTION_RE = re.compile(
+    r"^\*\s*Table\s+\d+[.:]?\s*(?P<body>.*?)\*\s*$"
+)
+_LATEX_BOLD_TABLE_CAPTION_RE = re.compile(
+    r"^\\textbf\{\s*Table\s+\d+[.:]?\s*(?P<body>.*?)\}\s*$"
+)
+_LATEX_ITALIC_TABLE_CAPTION_RE = re.compile(
+    r"^\\textit\{\s*Table\s+\d+[.:]?\s*(?P<body>.*?)\}\s*$"
+)
 
 # Bullet / numbered list patterns
 _BULLET_RE = re.compile(r"^(\s*)-\s+(.+)")
 _NUMBERED_RE = re.compile(r"^(\s*)\d+\.\s+(.+)")
+
+
+def _split_markdown_blocks(text: str) -> list[str]:
+    stripped = text.strip()
+    if not stripped:
+        return []
+    return [block for block in re.split(r"\n{2,}", stripped) if block.strip()]
+
+
+def _match_figure_caption_block(text: str) -> re.Match[str] | None:
+    stripped = text.strip()
+    return _BOLD_FIGURE_CAPTION_RE.match(stripped) or _ITALIC_FIGURE_CAPTION_RE.match(
+        stripped
+    )
+
+
+def _match_table_caption_block(text: str) -> re.Match[str] | None:
+    stripped = text.strip()
+    return (
+        _BOLD_TABLE_CAPTION_RE.match(stripped)
+        or _ITALIC_TABLE_CAPTION_RE.match(stripped)
+        or _LATEX_BOLD_TABLE_CAPTION_RE.match(stripped)
+        or _LATEX_ITALIC_TABLE_CAPTION_RE.match(stripped)
+    )
+
+
+def _join_markdown_blocks(blocks: list[str]) -> str:
+    if not blocks:
+        return ""
+    return "\n\n".join(block.rstrip() for block in blocks if block.strip())
+
+
+def _detach_abstract_media_blocks(abstract: str) -> tuple[str, str]:
+    """Move figures out of the abstract while keeping supporting prose nearby."""
+    blocks = _split_markdown_blocks(abstract)
+    if not blocks:
+        return abstract, ""
+
+    kept: list[str] = []
+    moved: list[str] = []
+    i = 0
+    while i < len(blocks):
+        block = blocks[i].strip()
+        if _IMAGE_RE.match(block):
+            if kept:
+                prev = kept[-1].strip()
+                if (
+                    prev
+                    and not prev.startswith(">")
+                    and not _IMAGE_RE.match(prev)
+                    and not _match_figure_caption_block(prev)
+                ):
+                    moved.append(kept.pop())
+            moved.append(block)
+            if i + 1 < len(blocks) and _match_figure_caption_block(blocks[i + 1].strip()):
+                moved.append(blocks[i + 1].strip())
+                i += 1
+        else:
+            kept.append(block)
+        i += 1
+
+    return _join_markdown_blocks(kept), _join_markdown_blocks(moved)
 
 
 def _convert_block(text: str) -> str:
@@ -1021,19 +1132,15 @@ def _convert_block(text: str) -> str:
         ):
             # Check if previous line is a table caption (e.g. **Table 1: ...**)
             table_caption = ""
-            if output:
-                prev = output[-1].strip()
-                # Match bold caption: \textbf{Table N...} (already converted)
-                # or raw markdown: **Table N: ...**
-                cap_m = re.match(
-                    r"(?:\\textbf\{|[*]{2})\s*Table\s+\d+[.:]?\s*(.*?)(?:\}|[*]{2})$",
-                    prev,
-                )
+            prev_idx = len(output) - 1
+            while prev_idx >= 0 and not output[prev_idx].strip():
+                prev_idx -= 1
+            if prev_idx >= 0:
+                prev = output[prev_idx].strip()
+                cap_m = _match_table_caption_block(prev)
                 if cap_m:
-                    table_caption = f"Table {cap_m.group(1)}" if cap_m.group(1) else ""
-                    if not table_caption:
-                        table_caption = prev
-                    output.pop()  # Remove caption line from output (now inside table)
+                    table_caption = cap_m.group("body").strip()
+                    output.pop(prev_idx)  # Remove caption line from output (now inside table)
             table_lines, i = _collect_table(lines, i)
             output.append(_render_table(table_lines, caption=table_caption))
             continue
@@ -1041,7 +1148,41 @@ def _convert_block(text: str) -> str:
         # Markdown image: ![caption](path)
         img_match = _IMAGE_RE.match(line.strip())
         if img_match:
-            output.append(_render_figure(img_match.group(1), img_match.group(2)))
+            figure_caption = img_match.group(1)
+            prev_idx = len(output) - 1
+            while prev_idx >= 0 and not output[prev_idx].strip():
+                prev_idx -= 1
+            if prev_idx >= 0:
+                prev_caption_match = re.match(
+                    r"\\textbf\{Figure\s+\d+[.:]?\}\s*(.*)\s*$",
+                    output[prev_idx].strip(),
+                )
+                if prev_caption_match:
+                    explained_caption = prev_caption_match.group(1).strip()
+                    if explained_caption:
+                        figure_caption = explained_caption
+                    output.pop(prev_idx)
+                else:
+                    prev_italic_caption_match = re.match(
+                        r"\\textit\{Figure\s+\d+[.:]?\s*(.*)\}\s*$",
+                        output[prev_idx].strip(),
+                    )
+                    if prev_italic_caption_match:
+                        explained_caption = prev_italic_caption_match.group(1).strip()
+                        if explained_caption:
+                            figure_caption = explained_caption
+                        output.pop(prev_idx)
+            next_idx = i + 1
+            while next_idx < len(lines) and not lines[next_idx].strip():
+                next_idx += 1
+            if next_idx < len(lines):
+                fig_caption_match = _match_figure_caption_block(lines[next_idx].strip())
+                if fig_caption_match:
+                    explained_caption = fig_caption_match.group("body").strip()
+                    if explained_caption:
+                        figure_caption = explained_caption
+                    i = next_idx
+            output.append(_render_figure(figure_caption, img_match.group(2)))
             i += 1
             continue
 
@@ -1144,7 +1285,7 @@ def _render_table(table_lines: list[str], caption: str = "") -> str:
 
     # Caption ABOVE table (standard academic convention)
     if caption:
-        cap_text = re.sub(r"^Table\s+\d+[.:]\s*", "", caption).strip()
+        cap_text = re.sub(r"^Table\s+\d+[.:]?\s*", "", caption).strip()
         if cap_text:
             lines_out.append(f"\\caption{{{_convert_inline(cap_text)}}}")
         else:
@@ -1433,12 +1574,14 @@ def _render_figure(caption: str, path: str) -> str:
     fig_num = _next_figure_num()
     # Sanitize path for LaTeX: replace spaces, keep underscores
     path = path.replace(" ", "_")
+    if caption:
+        caption = re.sub(r"^\s*Figure\s+\d+[.:]\s*", "", caption).strip()
     cap_tex = _convert_inline(caption) if caption else f"Figure {fig_num}"
     label_key = re.sub(r"[^a-z0-9]+", "_", caption.lower()).strip("_")[:30]
     if not label_key:
         label_key = str(fig_num)
     return (
-        "\\begin{figure}[t]\n"
+        "\\begin{figure}[H]\n"
         "\\centering\n"
         f"\\includegraphics[width=0.95\\columnwidth]{{{path}}}\n"
         f"\\caption{{{cap_tex}}}\n"

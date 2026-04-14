@@ -21,6 +21,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+_FALLBACK_GEOMETRY_PACKAGE = r"\usepackage[margin=0.85in]{geometry}"
+_FALLBACK_NUMERIC_CITES = r"\setcitestyle{numbers,square,sort&compress}"
+
 # BUG-201: Cyrillic → Latin transliteration for author names from Semantic Scholar.
 # pdflatex without T2A font encoding chokes on Cyrillic (e.g. "А. И. Колесников").
 _CYRILLIC_TO_LATIN_MAP: dict[str, str] = {
@@ -327,6 +330,16 @@ def fix_common_latex_errors(
                         fixed,
                     )
                     fixes.append(f"Removed missing package {pkg}")
+                    if _should_inject_fallback_geometry(fixed):
+                        fixed = _inject_fallback_geometry(fixed)
+                        fixes.append(
+                            "Added fallback geometry after style-package removal"
+                        )
+                    if _should_inject_fallback_numeric_cites(fixed):
+                        fixed = _inject_fallback_numeric_cites(fixed)
+                        fixes.append(
+                            "Added fallback numeric citation style after style-package removal"
+                        )
 
         # Too many unprocessed floats / Float(s) lost
         if "too many unprocessed floats" in err_lower or "float(s) lost" in err_lower:
@@ -365,6 +378,58 @@ def fix_common_latex_errors(
             pass  # Hard to auto-fix without context
 
     return fixed, fixes
+
+
+def _should_inject_fallback_geometry(tex_text: str) -> bool:
+    """Return True when a plain ``article`` fallback needs narrower margins.
+
+    When a conference ``.sty`` is missing, IMP-18 removes the ``\\usepackage``
+    line and the document silently degrades to LaTeX's default ``article``
+    margins, which are much wider than modern conference templates.  Inject a
+    modest geometry fallback only in that downgrade path.
+    """
+    if _FALLBACK_GEOMETRY_PACKAGE in tex_text:
+        return False
+    if re.search(r"\\usepackage(?:\[[^\]]*\])?\{geometry\}", tex_text):
+        return False
+    if not re.search(r"\\documentclass(?:\[[^\]]*\])?\{article\}", tex_text):
+        return False
+    return True
+
+
+def _inject_fallback_geometry(tex_text: str) -> str:
+    """Insert a fallback geometry package after ``\\documentclass``."""
+    return re.sub(
+        r"(\\documentclass(?:\[[^\]]*\])?\{article\}\s*)",
+        lambda m: f"{m.group(1)}{_FALLBACK_GEOMETRY_PACKAGE}\n",
+        tex_text,
+        count=1,
+    )
+
+
+def _should_inject_fallback_numeric_cites(tex_text: str) -> bool:
+    if _FALLBACK_NUMERIC_CITES in tex_text:
+        return False
+    if "\\setcitestyle{" in tex_text or "\\bibpunct{" in tex_text:
+        return False
+    if "\\usepackage{natbib}" not in tex_text and not re.search(
+        r"\\usepackage\[[^\]]*]\{natbib\}", tex_text
+    ):
+        return False
+    if not re.search(r"\\documentclass(?:\[[^\]]*\])?\{article\}", tex_text):
+        return False
+    return True
+
+
+def _inject_fallback_numeric_cites(tex_text: str) -> str:
+    if re.search(r"\\usepackage(?:\[[^\]]*])?\{natbib\}", tex_text):
+        return re.sub(
+            r"(\\usepackage(?:\[[^\]]*])?\{natbib\}\s*)",
+            lambda m: f"{m.group(1)}{_FALLBACK_NUMERIC_CITES}\n",
+            tex_text,
+            count=1,
+        )
+    return tex_text
 
 
 def _parse_log(log_text: str) -> tuple[list[str], list[str]]:

@@ -33,6 +33,7 @@ from researchclaw.templates.converter import (
     _parse_alignments,
     _render_itemize,
     _render_enumerate,
+    _render_figure,
     _reset_render_counters,
     _next_table_num,
     _next_figure_num,
@@ -96,6 +97,7 @@ class TestRenderPreamble:
         assert r"\end{abstract}" in tex
         assert r"\begin{document}" in tex
         assert r"\maketitle" in tex
+        assert tex.index(r"\maketitle") < tex.index(r"\begin{abstract}")
 
     def test_iclr_preamble_no_options(self) -> None:
         tex = ICLR_2025.render_preamble("Title", "Author", "Abstract")
@@ -112,6 +114,11 @@ class TestRenderPreamble:
     def test_icml_preamble_extra(self) -> None:
         tex = ICML_2025.render_preamble("Title", "Author", "Abstract")
         assert r"\icmltitlerunning{Title}" in tex
+
+    def test_abstract_stays_after_maketitle_for_all_templates(self) -> None:
+        for template in (NEURIPS_2025, ICLR_2026, ICML_2026):
+            tex = template.render_preamble("Title", "Author", "Abstract")
+            assert tex.index(r"\maketitle") < tex.index(r"\begin{abstract}")
 
 
 class TestRenderFooter:
@@ -365,6 +372,22 @@ class TestBuildBody:
         # H2 promoted to \section, H3 promoted to \subsection
         assert r"\subsection{Details}" in body
 
+    def test_mixed_main_heading_levels_are_normalized(self) -> None:
+        """Mixed H1/H2 paper sections should not create 0.x / 1.0.x numbering."""
+        md = (
+            "# My Paper\n\n"
+            "## Introduction\nIntro text.\n\n"
+            "# Related Work\nRelated text.\n\n"
+            "### Prior Work\nPrior details.\n\n"
+            "## Method\nMethod text.\n"
+        )
+        sections = _parse_sections(md)
+        body = _build_body(sections, title="My Paper")
+        assert r"\section{Introduction}" in body
+        assert r"\section{Related Work}" in body
+        assert r"\subsection{Prior Work}" in body
+        assert r"\section{Method}" in body
+
 
 class TestListRendering:
     """Tests for bullet and numbered list rendering."""
@@ -410,6 +433,22 @@ class TestTableRendering:
         assert r"\bottomrule" in result
         assert r"\end{tabular}" in result
         assert r"\end{table}" in result
+
+    def test_render_table_uses_explicit_caption_text(self) -> None:
+        lines = [
+            "| Setting | Value |",
+            "| --- | --- |",
+            "| Benchmark | Devign |",
+        ]
+        result = _render_table(
+            lines,
+            caption="Table 1. Verified experimental setup from the reported Devign execution.",
+        )
+        assert (
+            r"\caption{Verified experimental setup from the reported Devign execution.}"
+            in result
+        )
+        assert "Hyperparameter settings" not in result
 
     def test_render_counters_are_thread_local(self) -> None:
         results: list[tuple[int, int, int]] = []
@@ -468,9 +507,64 @@ class TestMarkdownToLatex:
         assert r"\section{Introduction}" in tex
         assert r"\subsection{Related Work}" in tex
         assert r"\section{Method}" in tex
-        assert r"\begin{itemize}" in tex
+
+    def test_figure_caption_strips_manual_figure_prefix(self) -> None:
+        tex = markdown_to_latex(
+            (
+                "# Title\n"
+                "**My Great Paper**\n\n"
+                "# Abstract\n"
+                "Abstract.\n\n"
+                "# Results\n"
+                "![Figure 13: Fig Hyp2 Physics Ablation](charts/fig.png)\n"
+            ),
+            NEURIPS_2024,
+        )
+        assert r"\caption{Fig Hyp2 Physics Ablation}" in tex
+        assert r"\caption{Figure 13: Fig Hyp2 Physics Ablation}" not in tex
         assert r"\bibliographystyle{plainnat}" in tex
         assert r"\end{document}" in tex
+
+    def test_figure_absorbs_following_bold_figure_explanation(self) -> None:
+        tex = markdown_to_latex(
+            (
+                "# Title\n"
+                "**My Great Paper**\n\n"
+                "# Results\n"
+                "Discussion before the figure.\n\n"
+                "![Pipeline overview](charts/pipeline.png)\n\n"
+                "**Figure 1.** Pipeline overview with the key stages called out.\n"
+            ),
+            NEURIPS_2024,
+        )
+        assert r"\caption{Pipeline overview with the key stages called out.}" in tex
+        assert "Figure 1." not in tex
+        assert "Pipeline overview}\\n\\textbf" not in tex
+
+    def test_figure_absorbs_following_italic_figure_explanation(self) -> None:
+        tex = markdown_to_latex(
+            (
+                "# Title\n"
+                "**My Great Paper**\n\n"
+                "# Results\n"
+                "Discussion before the figure.\n\n"
+                "![Leakage scatter](charts/leakage.png)\n\n"
+                "*Figure 5. Leakage remains high even when vulnerability detection is strong.*\n"
+            ),
+            NEURIPS_2024,
+        )
+        assert (
+            r"\caption{Leakage remains high even when vulnerability detection is strong.}"
+            in tex
+        )
+        assert r"\textit{Figure 5." not in tex
+        assert "Figure 5." not in tex
+
+    def test_render_figure_uses_locality_friendly_float_spec(self) -> None:
+        _reset_render_counters()
+        tex = _render_figure("Architecture overview", "charts/arch.png")
+        assert r"\begin{figure}[H]" in tex
+        assert r"\begin{figure}[!htbp]" not in tex
 
     def test_iclr_full(self) -> None:
         tex = markdown_to_latex(self.SAMPLE_MD, ICLR_2025)
@@ -505,6 +599,71 @@ class TestMarkdownToLatex:
         assert r"\(f(x)\)" in tex
         assert r"\[E = mc^2\]" in tex
 
+    def test_inline_math_subscripts_are_not_escaped(self) -> None:
+        tex = markdown_to_latex(
+            (
+                "# Title\n"
+                "**My Great Paper**\n\n"
+                "# Method\n"
+                "Let $x_i=(t_i,g_i)$ and $W_s h_i^{(s)} + b_s$ define the mapping.\n\n"
+                "\\[\n"
+                "\\mathcal{L}_{\\text{vul}} = - \\sum_i y_i\n"
+                "\\]\n"
+            ),
+            NEURIPS_2024,
+        )
+        assert r"$x_i=(t_i,g_i)$" in tex
+        assert r"$W_s h_i^{(s)} + b_s$" in tex
+        assert r"\mathcal{L}_{\text{vul}} = - \sum_i y_i" in tex
+        assert r"$x\_i" not in tex
+        assert r"\sum\_i" not in tex
+
+    def test_abstract_images_are_moved_out_of_abstract(self) -> None:
+        tex = markdown_to_latex(
+            (
+                "# Title\n"
+                "**My Great Paper**\n\n"
+                "# Abstract\n"
+                "Abstract paragraph.\n\n"
+                "The protocol is summarized visually below.\n\n"
+                "![Pipeline overview](charts/pipeline.png)\n\n"
+                "**Figure 1.** Pipeline summary.\n\n"
+                "> **Note:** Keep this note in the abstract.\n\n"
+                "# Introduction\n"
+                "Intro text.\n"
+            ),
+            NEURIPS_2024,
+        )
+        abstract_chunk = tex.split(r"\end{abstract}", 1)[0]
+        post_abstract = tex.split(r"\end{abstract}", 1)[1]
+        assert "![Pipeline overview]" not in tex
+        assert r"\includegraphics[width=0.95\columnwidth]{charts/pipeline.png}" in post_abstract
+        assert "The protocol is summarized visually below." in post_abstract
+        assert "Pipeline summary." in post_abstract
+        assert "Pipeline overview" not in abstract_chunk
+
+    def test_abstract_images_are_moved_out_of_abstract_with_italic_caption(self) -> None:
+        tex = markdown_to_latex(
+            (
+                "# Title\n"
+                "**My Great Paper**\n\n"
+                "# Abstract\n"
+                "Abstract paragraph.\n\n"
+                "The protocol is summarized visually below.\n\n"
+                "![Pipeline overview](charts/pipeline.png)\n\n"
+                "*Figure 1. Pipeline summary.*\n\n"
+                "# Introduction\n"
+                "Intro text.\n"
+            ),
+            NEURIPS_2024,
+        )
+        abstract_chunk = tex.split(r"\end{abstract}", 1)[0]
+        post_abstract = tex.split(r"\end{abstract}", 1)[1]
+        assert r"\includegraphics[width=0.95\columnwidth]{charts/pipeline.png}" in post_abstract
+        assert "Pipeline summary." in post_abstract
+        assert r"\textit{Figure 1." not in tex
+        assert "Pipeline overview" not in abstract_chunk
+
     def test_empty_paper(self) -> None:
         tex = markdown_to_latex("", NEURIPS_2024, title="Empty")
         assert r"\begin{document}" in tex
@@ -533,6 +692,38 @@ class TestMarkdownToLatex:
         tex = markdown_to_latex(md, NEURIPS_2024, title="T")
         assert r"\begin{tabular}" in tex
         assert r"\textbf{Model}" in tex
+
+    def test_bold_table_caption_is_absorbed_into_table_float(self) -> None:
+        md = (
+            "# Abstract\nabs\n"
+            "# Results\n"
+            "**Table 1. Aggregate cross-project results from one reported execution.**\n\n"
+            "| Method | F1 |\n"
+            "| --- | --- |\n"
+            "| PACT | 0.9299 |\n"
+        )
+        tex = markdown_to_latex(md, NEURIPS_2024, title="T")
+        assert (
+            r"\caption{Aggregate cross-project results from one reported execution.}"
+            in tex
+        )
+        assert r"\textbf{Table 1." not in tex
+
+    def test_italic_table_caption_is_absorbed_into_table_float(self) -> None:
+        md = (
+            "# Abstract\nabs\n"
+            "# Results\n"
+            "*Table 1. Per-regime F1 for methods with reported regime-wise outputs.*\n\n"
+            "| Method | Regime 0 |\n"
+            "| --- | --- |\n"
+            "| PACT | 0.8696 |\n"
+        )
+        tex = markdown_to_latex(md, NEURIPS_2024, title="T")
+        assert (
+            r"\caption{Per-regime F1 for methods with reported regime-wise outputs.}"
+            in tex
+        )
+        assert r"\textit{Table 1." not in tex
 
 
 # =====================================================================

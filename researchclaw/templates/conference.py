@@ -83,11 +83,11 @@ class ConferenceTemplate:
             f"\n"
             f"\\begin{{document}}\n"
             f"{post_doc_author}"
+            f"\\maketitle\n"
             f"\\begin{{abstract}}\n"
             f"{abstract}\n"
             f"\\end{{abstract}}\n"
             f"\n"
-            f"\\maketitle\n"
         )
 
     def render_footer(self, bib_file: str = "references") -> str:
@@ -145,6 +145,7 @@ NEURIPS_2024 = ConferenceTemplate(
         "nicefrac",
         "microtype",
         "graphicx",
+        "float",
         "natbib",
         "algorithm",
         "algorithmic",
@@ -173,6 +174,7 @@ ICLR_2025 = ConferenceTemplate(
         "nicefrac",
         "microtype",
         "graphicx",
+        "float",
         "natbib",
         "algorithm",
         "algorithmic",
@@ -200,6 +202,7 @@ ICML_2025 = ConferenceTemplate(
         "nicefrac",
         "microtype",
         "graphicx",
+        "float",
         "natbib",
         "algorithm",
         "algorithmic",
@@ -230,6 +233,7 @@ NEURIPS_2025 = ConferenceTemplate(
         "nicefrac",
         "microtype",
         "graphicx",
+        "float",
         "natbib",
         "algorithm",
         "algorithmic",
@@ -258,6 +262,7 @@ ICLR_2026 = ConferenceTemplate(
         "nicefrac",
         "microtype",
         "graphicx",
+        "float",
         "natbib",
         "algorithm",
         "algorithmic",
@@ -285,6 +290,7 @@ ICML_2026 = ConferenceTemplate(
         "nicefrac",
         "microtype",
         "graphicx",
+        "float",
         "natbib",
         "algorithm",
         "algorithmic",
@@ -314,6 +320,7 @@ GENERIC = ConferenceTemplate(
         "amsfonts",
         "amsmath",
         "graphicx",
+        "float",
         "natbib",
         "geometry",
         "adjustbox",

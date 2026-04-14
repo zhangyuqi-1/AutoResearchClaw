@@ -760,14 +760,14 @@ class TestLatexDisplayMath:
 # =========================================================================
 
 class TestLatexFigurePlacement:
-    """Verify figures use [t] placement specifier."""
+    """Verify figures use strong near-text placement."""
 
     def test_figure_uses_top_placement(self):
         from researchclaw.templates.converter import _render_figure
 
         result = _render_figure("Test Caption", "charts/test.png")
-        assert "\\begin{figure}[t]" in result
-        assert "[ht]" not in result
+        assert "\\begin{figure}[H]" in result
+        assert "[t]" not in result
 
     def test_figure_has_centering(self):
         from researchclaw.templates.converter import _render_figure
@@ -821,4 +821,3 @@ class TestChatWithPromptStripThinking:
 
         call_kwargs = mock_llm.chat.call_args
         assert call_kwargs.kwargs.get("strip_thinking") is False
-

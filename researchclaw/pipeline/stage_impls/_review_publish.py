@@ -25,7 +25,6 @@ from researchclaw.pipeline._helpers import (
     _extract_paper_title,
     _find_prior_file,
     _generate_framework_diagram_prompt,
-    _generate_neurips_checklist,
     _get_evolution_overlay,
     _read_best_analysis,
     _read_prior_artifact,
@@ -55,6 +54,570 @@ def _get_collect_raw_experiment_metrics():
 def _get_review_compiled_pdf():
     from researchclaw.pipeline.stage_impls._paper_writing import _review_compiled_pdf
     return _review_compiled_pdf
+
+
+def _strip_orphan_markdown_headings(text: str) -> str:
+    """Remove heading lines that contain only ``#`` markers and no title text."""
+    return re.sub(r"(?m)^[ \t]*#{1,6}[ \t]*\n", "", text)
+
+
+def _strip_framework_placeholder(text: str) -> str:
+    """Remove framework-diagram placeholder blocks when no real image exists."""
+    text = re.sub(
+        r"\n?!\[Framework Overview\]\(charts/framework_diagram\.png\)\n?",
+        "\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\n\*\*Figure N\.\*\*[^\n]*\n(?:[^\n].*\n)?",
+        "\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\nFigure N[^\n]*\n",
+        "\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(?mi)^[ \t]*\*\*Figure N\.\*\*[^\n]*(?:\n[^\n#][^\n]*)?",
+        "",
+        text,
+    )
+    return text
+
+
+def _extract_referenced_chart_files(text: str) -> set[str]:
+    """Return chart basenames referenced from markdown or LaTeX content."""
+    refs = set()
+    refs.update(
+        Path(m).name
+        for m in re.findall(r"!\[[^\]]*\]\((charts/[^)]+)\)", text)
+    )
+    refs.update(
+        Path(m).name
+        for m in re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{(charts/[^}]+)\}", text)
+    )
+    return {r for r in refs if r}
+
+
+def _stage14_chart_dirs(run_dir: Path) -> list[Path]:
+    """Return all available Stage 14 chart directories in preference order."""
+    dirs: list[Path] = []
+    current = run_dir / "stage-14" / "charts"
+    if current.is_dir():
+        dirs.append(current)
+    for candidate in sorted(run_dir.glob("stage-14_v*/charts"), reverse=True):
+        if candidate.is_dir() and candidate not in dirs:
+            dirs.append(candidate)
+    for candidate in sorted(run_dir.glob("stage-14_repair_v*/charts"), reverse=True):
+        if candidate.is_dir() and candidate not in dirs:
+            dirs.append(candidate)
+    for candidate in sorted(run_dir.glob("stage-14*/charts"), reverse=True):
+        if candidate.is_dir() and candidate not in dirs:
+            dirs.append(candidate)
+    return dirs
+
+
+def _copy_referenced_stage14_charts(
+    run_dir: Path,
+    chart_dir: Path,
+    referenced_files: set[str],
+) -> tuple[list[Path], list[str]]:
+    """Copy referenced charts from any Stage 14 analysis directory into Stage 22."""
+    import shutil
+
+    copied: list[Path] = []
+    missing: list[str] = []
+    search_dirs = _stage14_chart_dirs(run_dir)
+    for name in sorted(referenced_files):
+        src_path = None
+        for src_dir in search_dirs:
+            candidate = src_dir / name
+            if candidate.is_file():
+                src_path = candidate
+                break
+        if src_path is None:
+            missing.append(name)
+            continue
+        dest = chart_dir / name
+        shutil.copy2(src_path, dest)
+        copied.append(dest)
+    return copied, missing
+
+
+def _load_stage14_figure_caption_map(run_dir: Path) -> dict[str, str]:
+    """Load figure captions keyed by chart basename from Stage 14 metadata."""
+    caption_map: dict[str, str] = {}
+
+    for charts_dir in _stage14_chart_dirs(run_dir):
+        candidate_files = [
+            charts_dir / "figure_manifest.json",
+            charts_dir.parent / "figure_plan_final.json",
+            charts_dir.parent / "figure_plan.json",
+        ]
+        for metadata_path in candidate_files:
+            if not metadata_path.is_file():
+                continue
+            try:
+                payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+
+            entries = payload.get("manifest", payload) if isinstance(payload, dict) else payload
+            if not isinstance(entries, list):
+                continue
+
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                raw_path = (
+                    entry.get("file_path")
+                    or entry.get("absolute_path")
+                    or entry.get("output_filename")
+                    or entry.get("filename")
+                )
+                if not raw_path:
+                    continue
+                name = Path(str(raw_path)).name
+                if not name or name in caption_map:
+                    continue
+                caption = (entry.get("caption") or entry.get("title") or "").strip()
+                if caption:
+                    caption_map[name] = _clean_export_figure_caption(caption)
+
+    return caption_map
+
+
+def _clean_export_figure_caption(caption: str) -> str:
+    """Remove prompt-style directive suffixes from exported figure captions."""
+    cleaned = " ".join(caption.strip().split())
+    cleaned = re.sub(
+        r"\s+(?:The|This) figure should\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\s+This figure is\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    had_terminal_period = cleaned.rstrip().endswith(".")
+    cleaned = cleaned.strip(" .")
+    if cleaned and had_terminal_period:
+        return cleaned + "."
+    return cleaned
+
+
+def _rewrite_referenced_figure_captions(
+    text: str,
+    caption_map: dict[str, str],
+) -> str:
+    """Replace markdown image captions with cleaned Stage 14 captions when available."""
+    if not text or not caption_map:
+        return text
+
+    def _replace(match: re.Match[str]) -> str:
+        raw_path = match.group(2)
+        name = Path(raw_path).name
+        caption = caption_map.get(name)
+        if not caption:
+            return match.group(0)
+        return f"![{caption}]({raw_path})"
+
+    return re.sub(r"!\[([^\]]*)\]\((charts/[^)]+)\)", _replace, text)
+
+
+_IMAGE_BLOCK_RE = re.compile(r"^!\[([^\]]*)\]\((charts/[^)]+)\)\s*$")
+_FIGURE_CAPTION_BLOCK_RE = re.compile(
+    r"^(?:\*\*)?Figure\s+\d+[.:]?(?:\*\*)?\s*(.*\S)?\s*$",
+    re.IGNORECASE,
+)
+
+_STAGE22_BACKFILL_ORDER: tuple[str, ...] = (
+    "architecture_diagram_1.png",
+    "pipeline_overview_2.png",
+    "fig_multi_metric_grouped_results.png",
+    "fig_fusion_design_ablation.png",
+    "fig_variance_vs_accuracy.png",
+    "fig_modality_family_radar.png",
+    "comparison_illustration_3.png",
+)
+
+_STAGE22_EXPLANATION_SENTENCES: dict[str, str] = {
+    "architecture_diagram_1.png": "The model architecture is summarized visually below.",
+    "pipeline_overview_2.png": "The end-to-end evaluation protocol is summarized visually below.",
+    "fig_multi_metric_grouped_results.png": (
+        "A multi-metric comparison helps separate decision-quality gains from "
+        "ranking-quality gains."
+    ),
+    "fig_fusion_design_ablation.png": (
+        "An ablation-style comparison clarifies which fusion design choices drive "
+        "the reported gains."
+    ),
+    "fig_variance_vs_accuracy.png": (
+        "A stability view is useful for comparing mean performance against regime "
+        "sensitivity."
+    ),
+    "fig_modality_family_radar.png": (
+        "A modality-level summary highlights the trade-offs between semantic, "
+        "structural, and fused representations."
+    ),
+    "comparison_illustration_3.png": "The transfer hypotheses are contrasted visually below.",
+}
+
+
+def _load_stage14_figure_entries(run_dir: Path) -> list[dict[str, str]]:
+    """Load Stage 14 figures as ordered entries with basename + cleaned caption."""
+    entries: list[dict[str, str]] = []
+    seen: set[str] = set()
+    caption_map = _load_stage14_figure_caption_map(run_dir)
+
+    for preferred in _STAGE22_BACKFILL_ORDER:
+        if preferred in caption_map:
+            entries.append({"name": preferred, "caption": caption_map[preferred]})
+            seen.add(preferred)
+
+    for charts_dir in _stage14_chart_dirs(run_dir):
+        for candidate in sorted(charts_dir.glob("*")):
+            if not candidate.is_file():
+                continue
+            if candidate.suffix.lower() not in {".png", ".jpg", ".jpeg", ".pdf"}:
+                continue
+            name = candidate.name
+            if name in seen:
+                continue
+            entries.append({"name": name, "caption": caption_map.get(name, "")})
+            seen.add(name)
+    return entries
+
+
+def _split_markdown_blocks(text: str) -> list[str]:
+    stripped = text.strip()
+    if not stripped:
+        return []
+    return [block for block in re.split(r"\n{2,}", stripped) if block.strip()]
+
+
+def _join_markdown_blocks(blocks: list[str]) -> str:
+    if not blocks:
+        return ""
+    return "\n\n".join(block.rstrip() for block in blocks if block.strip()) + "\n"
+
+
+def _block_section_contexts(blocks: list[str]) -> list[str]:
+    """Track the current section heading for each markdown block."""
+    contexts: list[str] = []
+    current = ""
+    for block in blocks:
+        heading_match = re.match(r"^(#{1,6})\s+(.*?)\s*$", block.strip())
+        if heading_match:
+            current = heading_match.group(2).strip().lower()
+        contexts.append(current)
+    return contexts
+
+
+def _image_block_chart_name(block: str) -> str | None:
+    match = _IMAGE_BLOCK_RE.match(block.strip())
+    if not match:
+        return None
+    return Path(match.group(2)).name
+
+
+def _is_figure_caption_block(block: str) -> bool:
+    return bool(_FIGURE_CAPTION_BLOCK_RE.match(block.strip()))
+
+
+def _figure_caption_text(block: str) -> str:
+    match = _FIGURE_CAPTION_BLOCK_RE.match(block.strip())
+    return (match.group(1).strip() if match and match.group(1) else block.strip())
+
+
+def _candidate_match_score(text: str, name: str) -> int:
+    lowered = text.lower()
+    score = 0
+    if "architecture" in name:
+        if "pact" in lowered:
+            score += 4
+        if "semantic" in lowered:
+            score += 2
+        if "structural" in lowered:
+            score += 2
+        if "gate" in lowered or "gated" in lowered:
+            score += 2
+        if "overview" in lowered:
+            score += 1
+    if "pipeline" in name:
+        if "setup" in lowered:
+            score += 4
+        if "evaluation protocol" in lowered:
+            score += 3
+        if "protocol" in lowered or "pipeline" in lowered:
+            score += 4
+        if "cross-project" in lowered or "held-out" in lowered:
+            score += 2
+        if "setup" in lowered or "regime" in lowered or "transfer" in lowered:
+            score += 2
+    if "multi_metric" in name:
+        if "pr-auc" in lowered or "roc-auc" in lowered:
+            score += 4
+        if "metric" in lowered:
+            score += 2
+    if "fusion_design_ablation" in name:
+        if "ablation" in lowered:
+            score += 4
+        if "agreement" in lowered or "disagreement" in lowered:
+            score += 2
+        if "fusion" in lowered:
+            score += 2
+    if "variance_vs_accuracy" in name:
+        if "variance" in lowered or "stability" in lowered:
+            score += 4
+        if "regime" in lowered:
+            score += 2
+    if "modality_family_radar" in name:
+        if "semantic" in lowered and "structural" in lowered:
+            score += 4
+        if "fusion" in lowered:
+            score += 2
+    if "comparison_illustration" in name:
+        if "hypothesis" in lowered or "alignment" in lowered:
+            score += 3
+        if "transfer" in lowered:
+            score += 2
+    return score
+
+
+def _anchor_score_for_block(block: str, figure_name: str) -> int:
+    block_text = block.lower()
+    score = _candidate_match_score(block_text, figure_name)
+    if block.startswith("## ") or block.startswith("### "):
+        if "pipeline" in figure_name and ("setup" in block_text or "experiment" in block_text):
+            score += 2
+        if "architecture" in figure_name and "method" in block_text:
+            score += 2
+        if "multi_metric" in figure_name and ("metric" in block_text or "result" in block_text):
+            score += 2
+    return score
+
+
+def _find_image_index(blocks: list[str], figure_name: str) -> int | None:
+    return next(
+        (idx for idx, block in enumerate(blocks) if _image_block_chart_name(block) == figure_name),
+        None,
+    )
+
+
+def _find_best_caption_index(blocks: list[str], figure_name: str) -> int | None:
+    best_idx: int | None = None
+    best_score = 0
+    for idx, block in enumerate(blocks):
+        if not _is_figure_caption_block(block):
+            continue
+        score = _candidate_match_score(_figure_caption_text(block), figure_name)
+        if score > best_score:
+            best_idx = idx
+            best_score = score
+    return best_idx if best_score > 0 else None
+
+
+def _extract_image_bundle(
+    blocks: list[str],
+    image_idx: int,
+    *,
+    explanation_hint: str = "",
+) -> tuple[int, int, list[str]]:
+    start = image_idx
+    end = image_idx + 1
+
+    if image_idx > 0 and blocks[image_idx - 1].strip() == explanation_hint:
+        start = image_idx - 1
+    if start > 0 and _is_figure_caption_block(blocks[start - 1]):
+        start -= 1
+    if end < len(blocks) and _is_figure_caption_block(blocks[end]):
+        end += 1
+
+    return start, end, list(blocks[start:end])
+
+
+def _insert_architecture_bundle_near_caption(
+    blocks: list[str],
+    entries: list[dict[str, str]],
+) -> list[str]:
+    """Keep architecture figure, explanation, and caption as one local bundle."""
+    if not blocks:
+        return blocks
+
+    result = list(blocks)
+    target_name = "architecture_diagram_1.png"
+    explanation = _STAGE22_EXPLANATION_SENTENCES[target_name]
+    caption_idx = _find_best_caption_index(result, target_name)
+    if caption_idx is None:
+        return result
+
+    image_idx = _find_image_index(result, target_name)
+    bundle_blocks = [explanation, f"![architecture diagram](charts/{target_name})"]
+
+    if image_idx is not None:
+        start, end, current_bundle = _extract_image_bundle(
+            result,
+            image_idx,
+            explanation_hint=explanation,
+        )
+        image_blocks = [block for block in current_bundle if _image_block_chart_name(block) == target_name]
+        if image_blocks:
+            bundle_blocks[1] = image_blocks[0]
+        del result[start:end]
+        if start < caption_idx:
+            caption_idx -= end - start
+
+    if caption_idx > 0 and result[caption_idx - 1].strip() == explanation:
+        bundle_blocks = [bundle_blocks[-1]]
+
+    result[caption_idx:caption_idx] = bundle_blocks
+    return result
+
+
+def _move_pipeline_bundle_to_setup(
+    blocks: list[str],
+    entries: list[dict[str, str]],
+) -> list[str]:
+    """Move or insert the pipeline figure as one local bundle near setup/protocol text."""
+    if not blocks:
+        return blocks
+
+    result = list(blocks)
+    target_name = "pipeline_overview_2.png"
+    explanation = _STAGE22_EXPLANATION_SENTENCES[target_name]
+    entry = next((item for item in entries if item["name"] == target_name), None)
+    if entry is None:
+        return result
+
+    contexts = _block_section_contexts(result)
+    image_idx = _find_image_index(result, target_name)
+    bundle_blocks = [explanation, f"![{entry['caption'] or 'Pipeline overview'}](charts/{target_name})"]
+    bundle_start: int | None = None
+    bundle_end: int | None = None
+
+    current_score = -1
+    if image_idx is not None:
+        start, end, current_bundle = _extract_image_bundle(
+            result,
+            image_idx,
+            explanation_hint=explanation,
+        )
+        bundle_start, bundle_end = start, end
+        image_blocks = [block for block in current_bundle if _image_block_chart_name(block) == target_name]
+        if image_blocks:
+            bundle_blocks[-1] = image_blocks[0]
+        anchor_idx = start - 1 if start > 0 else image_idx - 1
+        if anchor_idx is not None and anchor_idx >= 0:
+            current_score = _anchor_score_for_block(result[anchor_idx], target_name)
+        if contexts[image_idx]:
+            current_score = max(
+                current_score,
+                _anchor_score_for_block(f"## {contexts[image_idx]}", target_name),
+            )
+
+    best_idx = -1
+    best_score = 0
+    for idx, block in enumerate(result):
+        if bundle_start is not None and bundle_start <= idx < (bundle_end or bundle_start):
+            continue
+        if _image_block_chart_name(block) is not None or _is_figure_caption_block(block):
+            continue
+        if contexts[idx] == "abstract":
+            continue
+        score = _anchor_score_for_block(block, target_name)
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+
+    if best_idx < 0 or best_score <= max(current_score, 0):
+        return result
+
+    if bundle_start is not None and bundle_end is not None:
+        del result[bundle_start:bundle_end]
+        if bundle_start <= best_idx:
+            best_idx -= bundle_end - bundle_start
+        contexts = _block_section_contexts(result)
+
+    if best_idx + 1 < len(result) and result[best_idx + 1].strip() == explanation:
+        bundle_blocks = [bundle_blocks[-1]]
+    result[best_idx + 1:best_idx + 1] = bundle_blocks
+    return result
+
+
+def _backfill_minimum_figures(
+    blocks: list[str],
+    entries: list[dict[str, str]],
+    min_figures: int,
+) -> list[str]:
+    """Insert additional Stage 14 figures as local explanation+image bundles."""
+    if not blocks:
+        return blocks
+
+    result = list(blocks)
+    referenced = {
+        name for block in result if (name := _image_block_chart_name(block)) is not None
+    }
+
+    for preferred_name in _STAGE22_BACKFILL_ORDER:
+        if len(referenced) >= min_figures:
+            break
+        if preferred_name in referenced:
+            continue
+        entry = next((item for item in entries if item["name"] == preferred_name), None)
+        if entry is None:
+            continue
+
+        best_idx = -1
+        best_score = 0
+        contexts = _block_section_contexts(result)
+        for idx, block in enumerate(result):
+            if _image_block_chart_name(block) is not None or _is_figure_caption_block(block):
+                continue
+            if contexts[idx] == "abstract":
+                continue
+            score = _anchor_score_for_block(block, preferred_name)
+            if score > best_score:
+                best_idx = idx
+                best_score = score
+        if best_idx < 0 or best_score <= 0:
+            continue
+
+        explanation = _STAGE22_EXPLANATION_SENTENCES.get(preferred_name, "")
+        new_blocks: list[str] = []
+        if explanation and (best_idx + 1 >= len(result) or result[best_idx + 1].strip() != explanation):
+            new_blocks.append(explanation)
+        image_caption = entry["caption"] or preferred_name.rsplit(".", 1)[0].replace("_", " ")
+        new_blocks.append(f"![{image_caption}](charts/{preferred_name})")
+        result[best_idx + 1:best_idx + 1] = new_blocks
+        referenced.add(preferred_name)
+
+    return result
+
+
+def _rebuild_export_figure_bundles(
+    text: str,
+    run_dir: Path,
+    min_figures: int,
+) -> str:
+    """Rebuild Stage 22 figure placement using local figure bundles."""
+    entries = _load_stage14_figure_entries(run_dir)
+    if not entries:
+        return text
+    blocks = _split_markdown_blocks(text)
+    if not blocks:
+        return text
+    blocks = _insert_architecture_bundle_near_caption(blocks, entries)
+    blocks = _backfill_minimum_figures(blocks, entries, min_figures=min_figures)
+    blocks = _move_pipeline_bundle_to_setup(blocks, entries)
+    return _join_markdown_blocks(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +800,14 @@ def _execute_paper_revision(
 
     if llm is not None:
         _pm = prompts or PromptManager()
+        paper_title = (getattr(config.research, "paper_title", "") or "").strip()
+        title_override = ""
+        if paper_title:
+            title_override = (
+                "\n\nTITLE OVERRIDE (Hard Constraint):\n"
+                f'- Keep the paper title EXACTLY as: "{paper_title}"\n'
+                "- Do NOT paraphrase, shorten, expand, or replace the title during revision.\n"
+            )
         try:
             _ws_revision = _pm.block("writing_structure")
         except (KeyError, Exception):  # noqa: BLE001
@@ -272,7 +843,7 @@ def _execute_paper_revision(
             topic_constraint=_pm.block("topic_constraint", topic=config.research.topic),
             writing_structure=_ws_revision,
             draft=draft,
-            reviews=_quality_prefix + reviews + data_integrity_revision,
+            reviews=title_override + _quality_prefix + reviews + data_integrity_revision,
             **_rev_blocks,
         )
         # R10-Fix2: Ensure max_tokens is sufficient for full paper revision
@@ -1404,6 +1975,34 @@ def _resolve_missing_citations(
     return resolved, new_entries
 
 
+def _strip_export_meta_sections(markdown: str) -> str:
+    """Remove internal run-history/checklist sections from exported papers."""
+    drop_headings = {
+        "lessons from prior runs",
+        "learned skills from prior runs",
+        "neurips paper checklist",
+    }
+    lines = markdown.splitlines()
+    kept: list[str] = []
+    skip_level: int | None = None
+
+    for line in lines:
+        match = re.match(r"^(#{1,6})\s+(.*?)\s*$", line)
+        if match:
+            level = len(match.group(1))
+            heading = match.group(2).strip().lower()
+            if skip_level is not None and level <= skip_level:
+                skip_level = None
+            if heading in drop_headings:
+                skip_level = level
+                continue
+        if skip_level is not None:
+            continue
+        kept.append(line)
+
+    return "\n".join(kept)
+
+
 # ---------------------------------------------------------------------------
 # Stage 22: Export & Publish
 # ---------------------------------------------------------------------------
@@ -1535,102 +2134,20 @@ def _execute_export_publish(
             len(_matches) - 1,
         )
 
-    # IMP-19 Layer 2: Ensure at least figures are referenced in the paper
+    final_paper = _strip_export_meta_sections(final_paper)
+
+    _caption_map = _load_stage14_figure_caption_map(run_dir)
+    final_paper = _rewrite_referenced_figure_captions(final_paper, _caption_map)
+    final_paper = _rebuild_export_figure_bundles(
+        final_paper,
+        run_dir,
+        min_figures=max(4, config.experiment.figure_agent.min_figures),
+    )
+
+    # Re-anchor existing figures near their local textual explanation and only
+    # backfill a small number of additional Stage 14 figures when needed to
+    # meet the minimum figure floor with local explanatory text.
     import re as _re_fig
-    chart_files = []
-    # BUG-215: Also search stage-14* versioned dirs (stage-14_v1, etc.)
-    # in case stage-14/ was renamed and never recreated.
-    _chart_search_dirs = [stage_dir / "charts", run_dir / "stage-14" / "charts"]
-    for _s14_charts in sorted(run_dir.glob("stage-14*/charts"), reverse=True):
-        if _s14_charts not in _chart_search_dirs:
-            _chart_search_dirs.append(_s14_charts)
-    for _chart_src_dir in _chart_search_dirs:
-        if _chart_src_dir.is_dir():
-            chart_files.extend(sorted(_chart_src_dir.glob("*.png")))
-    # BUG-190: Also inject charts not already referenced in the paper.
-    # The old condition only fired when NO figures were present. Now we
-    # filter to only unreferenced charts, so partially-illustrated papers
-    # also get the remaining charts injected.
-    _already_referenced = set()
-    for _cf in chart_files:
-        if _cf.name in final_paper:
-            _already_referenced.add(_cf.name)
-    chart_files = [cf for cf in chart_files if cf.name not in _already_referenced]
-    if chart_files:
-        # Distribute figures to relevant sections based on filename keywords
-        _fig_placement: dict[str, list[str]] = {
-            "method": [],       # architecture, method, model, pipeline diagrams
-            "result": [],       # experiment, comparison, ablation charts
-            "intro": [],        # concept, overview, illustration
-        }
-        _fig_counter = len(_already_referenced)  # start numbering after existing figs
-        for cf in chart_files[:6]:
-            _fig_counter += 1
-            stem_lower = cf.stem.lower()
-            label = cf.stem.replace("_", " ").title()
-            fig_md = f"![Figure {_fig_counter}: {label}](charts/{cf.name})"
-            if any(k in stem_lower for k in ("architecture", "model", "pipeline", "method", "flowchart")):
-                _fig_placement["method"].append(fig_md)
-            elif any(k in stem_lower for k in ("experiment", "comparison", "ablation", "result", "metric")):
-                _fig_placement["result"].append(fig_md)
-            elif any(k in stem_lower for k in ("concept", "overview", "illustration", "threat", "attack")):
-                _fig_placement["intro"].append(fig_md)
-            else:
-                _fig_placement["result"].append(fig_md)  # default to results
-
-        # Insert figures at relevant section boundaries.
-        # BUG-200: Match both H1 (#) and H2 (##) headings — LLMs generate
-        # either level depending on the writing_structure prompt.
-        _section_markers = {
-            "method": ["# Method", "## Method", "# Methodology", "## Methodology",
-                        "# Approach", "## Approach", "# Framework", "## Framework",
-                        "## 3. Method", "## 3 Method"],
-            "result": ["# Results", "## Results", "# Experiments", "## Experiments",
-                        "# Evaluation", "## Evaluation",
-                        "## 5. Results", "## 4. Experiments", "## 5 Results"],
-            "intro": ["# Related Work", "## Related Work", "# Background",
-                       "## Background", "## 2. Related", "## 2 Related Work"],
-        }
-        _total_inserted = 0
-        for category, figs in _fig_placement.items():
-            if not figs:
-                continue
-            fig_block = "\n\n" + "\n\n".join(figs) + "\n\n"
-            inserted = False
-            for marker in _section_markers.get(category, []):
-                if marker in final_paper:
-                    # Insert BEFORE the marker section (so figure appears at end of previous section)
-                    final_paper = final_paper.replace(marker, fig_block + marker, 1)
-                    inserted = True
-                    _total_inserted += len(figs)
-                    break
-            if not inserted:
-                # Fallback: insert before Conclusion/Limitations/Discussion
-                for fallback in ["# Conclusion", "## Conclusion",
-                                 "# Limitations", "## Limitations",
-                                 "# Discussion", "## Discussion"]:
-                    if fallback in final_paper:
-                        final_paper = final_paper.replace(fallback, fig_block + fallback, 1)
-                        inserted = True
-                        _total_inserted += len(figs)
-                        break
-            if not inserted:
-                # BUG-200: Last resort — insert before closing fence marker
-                # rather than appending after it (which puts content outside
-                # the markdown fence and gets dropped by converter).
-                _fence_end = final_paper.rfind("\n```")
-                if _fence_end > 0:
-                    final_paper = (
-                        final_paper[:_fence_end] + fig_block + final_paper[_fence_end:]
-                    )
-                else:
-                    final_paper += fig_block
-                _total_inserted += len(figs)
-
-        logger.info(
-            "IMP-19: Injected %d figure references into paper_final.md (distributed across sections)",
-            _total_inserted,
-        )
 
     # IMP-24: Detect excessive number repetition
     _numbers_found = _re_fig.findall(r"\b\d+\.\d{2,}\b", final_paper)
@@ -1641,6 +2158,16 @@ def _execute_export_publish(
             "IMP-24: Numbers repeated >3 times: %s",
             _repeated,
         )
+
+    final_paper = _strip_orphan_markdown_headings(final_paper)
+    _framework_exists = any(
+        p.is_file()
+        for chart_dir in _stage14_chart_dirs(run_dir)
+        for p in chart_dir.glob("framework_diagram.*")
+    )
+    if not _framework_exists:
+        final_paper = _strip_framework_placeholder(final_paper)
+    final_paper = re.sub(r"\n{3,}", "\n\n", final_paper).strip() + "\n"
 
     (stage_dir / "paper_final.md").write_text(final_paper, encoding="utf-8")
 
@@ -2015,16 +2542,6 @@ def _execute_export_publish(
         tpl = get_template(config.export.target_conference)
         # Use the latex-citation-processed version if available
         tex_source = final_paper_latex
-        # Append NeurIPS-style checklist if target is a ML conference
-        if tpl.name in ("neurips_2024", "neurips_2025", "icml_2025", "icml_2026",
-                         "iclr_2025", "iclr_2026"):
-            _has_exp = bool(_read_prior_artifact(run_dir, "experiment_summary.json"))
-            _checklist = _generate_neurips_checklist(
-                has_experiments=_has_exp,
-                has_code=True,
-            )
-            if "NeurIPS Paper Checklist" not in tex_source:
-                tex_source = tex_source.rstrip() + "\n\n" + _checklist
         _t = _extract_paper_title(tex_source)
         tex_content = markdown_to_latex(
             tex_source,
@@ -2185,23 +2702,24 @@ def _execute_export_publish(
             chart_dir = stage_dir / "charts"
             chart_dir.mkdir(parents=True, exist_ok=True)
             charts: list[Path] = []
-
-            # Copy FigureAgent charts from stage-14 (any version)
-            _fa_charts_found = False
-            for _fa_dir in sorted(run_dir.glob("stage-14*/charts"), reverse=True):
-                _fa_pngs = list(_fa_dir.glob("fig_*.png"))
-                if _fa_pngs:
-                    import shutil
-                    for _fa_png in _fa_pngs:
-                        dest = chart_dir / _fa_png.name
-                        shutil.copy2(_fa_png, dest)
-                        charts.append(dest)
-                    _fa_charts_found = True
-                    logger.info(
-                        "Stage 22: Copied %d FigureAgent charts from %s",
-                        len(_fa_pngs), _fa_dir,
-                    )
-                    break
+            referenced_chart_files = _extract_referenced_chart_files(final_paper)
+            copied_stage14, missing_stage14 = _copy_referenced_stage14_charts(
+                run_dir,
+                chart_dir,
+                referenced_chart_files,
+            )
+            charts.extend(copied_stage14)
+            if copied_stage14:
+                logger.info(
+                    "Stage 22: Copied %d referenced Stage 14 chart(s)",
+                    len(copied_stage14),
+                )
+            if missing_stage14:
+                logger.warning(
+                    "Stage 22: %d referenced chart(s) not found in stage-14*: %s",
+                    len(missing_stage14),
+                    missing_stage14[:12],
+                )
 
             # Generate structured charts from visualize.py
             from researchclaw.experiment.visualize import generate_all_charts
@@ -2216,7 +2734,13 @@ def _execute_export_publish(
 
             if charts:
                 artifacts.append("charts/")
-                logger.info("Stage 22: Generated %d chart(s) total", len(charts))
+                logger.info(
+                    "Stage 22: Prepared %d chart artifact(s) total "
+                    "(referenced=%d, generated=%d)",
+                    len(charts),
+                    len(copied_stage14),
+                    len(_viz_charts),
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Chart generation failed: %s", exc)
 

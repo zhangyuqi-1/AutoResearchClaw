@@ -211,6 +211,76 @@ class TestFixUnicodeErrors:
         assert not any("U+202F" in f for f in fixes)
 
 
+class TestMissingStyleFallbackGeometry:
+    """Test margin fallback when conference style files are missing."""
+
+    def test_missing_style_in_article_injects_geometry(self):
+        tex = (
+            "\\documentclass{article}\n"
+            "\\usepackage{neurips_2025}\n"
+            "\\usepackage{graphicx}\n"
+            "\\begin{document}\n"
+        )
+        errors = ["File `neurips_2025.sty' not found."]
+
+        fixed, fixes = fix_common_latex_errors(tex, errors)
+
+        assert "% IMP-18: Removed missing package neurips_2025" in fixed
+        assert "\\usepackage[margin=0.85in]{geometry}" in fixed
+        assert "Added fallback geometry after style-package removal" in fixes
+
+    def test_existing_geometry_is_not_duplicated(self):
+        tex = (
+            "\\documentclass{article}\n"
+            "\\usepackage{neurips_2025}\n"
+            "\\usepackage[margin=1in]{geometry}\n"
+            "\\begin{document}\n"
+        )
+        errors = ["File `neurips_2025.sty' not found."]
+
+        fixed, fixes = fix_common_latex_errors(tex, errors)
+
+        assert fixed.count("\\usepackage[margin=1in]{geometry}") == 1
+        assert "\\usepackage[margin=0.85in]{geometry}" not in fixed
+        assert "Added fallback geometry after style-package removal" not in fixes
+
+    def test_missing_style_in_article_injects_numeric_citations(self):
+        tex = (
+            "\\documentclass{article}\n"
+            "\\usepackage{neurips_2025}\n"
+            "\\usepackage{natbib}\n"
+            "\\begin{document}\n"
+        )
+        errors = ["File `neurips_2025.sty' not found."]
+
+        fixed, fixes = fix_common_latex_errors(tex, errors)
+
+        assert "\\setcitestyle{numbers,square,sort&compress}" in fixed
+        assert (
+            "Added fallback numeric citation style after style-package removal"
+            in fixes
+        )
+
+    def test_existing_citestyle_is_not_duplicated(self):
+        tex = (
+            "\\documentclass{article}\n"
+            "\\usepackage{neurips_2025}\n"
+            "\\usepackage{natbib}\n"
+            "\\setcitestyle{authoryear,round}\n"
+            "\\begin{document}\n"
+        )
+        errors = ["File `neurips_2025.sty' not found."]
+
+        fixed, fixes = fix_common_latex_errors(tex, errors)
+
+        assert fixed.count("\\setcitestyle{authoryear,round}") == 1
+        assert "\\setcitestyle{numbers,square,sort&compress}" not in fixed
+        assert (
+            "Added fallback numeric citation style after style-package removal"
+            not in fixes
+        )
+
+
 # ---------------------------------------------------------------------------
 # _run_pdflatex — bytes mode decoding
 # ---------------------------------------------------------------------------
