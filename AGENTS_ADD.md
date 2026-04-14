@@ -24,7 +24,7 @@
 - 新增 `deliverables_stage24/`，它才是 **Stage 24 优先** 的最终稿交付目录。
 - 当前主 LLM 路径是 `ACP + codex`，不是直接走 OpenAI 兼容 API。
 - Stage 10 代码生成和实验 repair 当前仍优先 `OpenCode`，不是 `codex exec`。
-- FigureAgent 的 Gemini REST URL 已切到本地中转站地址，这是当前环境配置，不是无效脏改动。
+- FigureAgent 的 Gemini REST base URL 当前支持环境变量覆盖，不再写死在代码里。
 
 ## 真实入口与运行方式
 
@@ -50,7 +50,8 @@
 这些不是 Stage 24 核心功能，但属于当前环境中已经验证有效的稳定性改动：
 
 - `researchclaw/agents/figure_agent/nano_banana.py`
-  - Gemini REST URL 使用本地中转站 `https://xingjiabiapi.org/v1beta/`
+  - Gemini REST base URL 优先读取 `GEMINI_BASE_URL` / `GOOGLE_GEMINI_BASE_URL`
+  - 未配置时回退官方 `https://generativelanguage.googleapis.com/v1beta/`
 - `researchclaw/llm/acp_client.py`
   - ACP session 初始化 timeout 放宽
 - `researchclaw/pipeline/_helpers.py`
@@ -412,7 +413,7 @@ Stage 24 当前已内置 Word 导出链：
 - style 缺失时的 PDF fallback 修复
 - Word 导出链与 `reference.docx`
 - `deliverables_stage24/` 与标题命名 zip
-- `nano_banana.py` 的中转站 URL
+- `nano_banana.py` 的 Gemini base URL 环境变量覆盖逻辑
 - ACP timeout 放宽
 - sandbox 自动补依赖时仅对 pip 清代理
 

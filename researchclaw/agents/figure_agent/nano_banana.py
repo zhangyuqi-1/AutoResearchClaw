@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_MODEL = "gemini-2.5-flash-image"
+_DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/"
 _FALLBACK_MODELS = [
     "gemini-3.1-flash-image-preview",
     "gemini-3-pro-image-preview",
@@ -85,6 +86,11 @@ class NanoBananaAgent(BaseAgent):
             or ""
         )
         self._model = model
+        self._base_url = (
+            os.environ.get("GEMINI_BASE_URL")
+            or os.environ.get("GOOGLE_GEMINI_BASE_URL")
+            or _DEFAULT_GEMINI_BASE_URL
+        ).rstrip("/") + "/"
         self._output_dir = Path(output_dir) if output_dir else None
         self._aspect_ratio = aspect_ratio
 
@@ -366,10 +372,7 @@ class NanoBananaAgent(BaseAgent):
             logger.error("Invalid Gemini model name: %r", self._model)
             return False
 
-        url = (
-            f"https://xingjiabiapi.org/v1beta/"
-            f"models/{self._model}:generateContent"
-        )
+        url = f"{self._base_url}models/{self._model}:generateContent"
 
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
