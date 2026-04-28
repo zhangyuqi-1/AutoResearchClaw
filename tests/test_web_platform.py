@@ -12,6 +12,7 @@ import os
 import sys
 import tempfile
 import time
+import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -493,7 +494,9 @@ class TestWizard:
     def test_environment_detection(self) -> None:
         from researchclaw.wizard.validator import detect_environment
 
-        report = detect_environment()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            report = detect_environment()
         assert report.has_python is True
         assert report.python_version != ""
         d = report.to_dict()
@@ -546,14 +549,14 @@ class TestEvents:
 class TestDialogRouter:
     """Test dialog message routing."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_route_help_message(self) -> None:
         from researchclaw.server.dialog.router import route_message
 
         response = await route_message("help", "test-client")
         assert "help" in response.lower() or "I can" in response
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_route_json_message(self) -> None:
         from researchclaw.server.dialog.router import route_message
 
@@ -562,7 +565,7 @@ class TestDialogRouter:
         assert isinstance(response, str)
         assert len(response) > 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_route_status_message(self) -> None:
         from researchclaw.server.dialog.router import route_message
 
@@ -606,7 +609,7 @@ class TestFastAPIApp:
         from researchclaw.server.app import create_app
         return create_app(config)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_health_endpoint(self, app: object) -> None:
         from httpx import AsyncClient, ASGITransport
 
@@ -617,7 +620,7 @@ class TestFastAPIApp:
             data = resp.json()
             assert data["status"] == "ok"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_config_endpoint(self, app: object) -> None:
         from httpx import AsyncClient, ASGITransport
 
@@ -628,7 +631,7 @@ class TestFastAPIApp:
             data = resp.json()
             assert data["project"] == "test"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pipeline_status_idle(self, app: object) -> None:
         from httpx import AsyncClient, ASGITransport
 
@@ -638,7 +641,7 @@ class TestFastAPIApp:
             assert resp.status_code == 200
             assert resp.json()["status"] == "idle"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pipeline_stages(self, app: object) -> None:
         from httpx import AsyncClient, ASGITransport
 
@@ -649,7 +652,7 @@ class TestFastAPIApp:
             stages = resp.json()["stages"]
             assert len(stages) == 24
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_runs_list(self, app: object) -> None:
         from httpx import AsyncClient, ASGITransport
 
@@ -659,7 +662,7 @@ class TestFastAPIApp:
             assert resp.status_code == 200
             assert "runs" in resp.json()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_projects_list(self, app: object) -> None:
         from httpx import AsyncClient, ASGITransport
 
@@ -669,7 +672,7 @@ class TestFastAPIApp:
             assert resp.status_code == 200
             assert "projects" in resp.json()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stop_pipeline_404_when_idle(self, app: object) -> None:
         from httpx import AsyncClient, ASGITransport
 

@@ -24,6 +24,13 @@ from researchclaw.literature.verify import (
 from researchclaw.literature.models import Author, Paper
 
 
+@pytest.fixture(autouse=True)
+def _patch_verify_cache_dir(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    import researchclaw.literature.verify as verify_mod
+
+    monkeypatch.setattr(verify_mod, "_CACHE_DIR", tmp_path / "citation_verify_cache")
+
+
 SAMPLE_BIB = textwrap.dedent("""\
     @article{vaswani2017attention,
       title = {Attention Is All You Need},

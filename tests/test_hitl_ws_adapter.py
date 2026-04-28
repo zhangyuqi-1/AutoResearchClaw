@@ -79,7 +79,7 @@ def adapter(ws: MockWebSocket, tmp_run: Path) -> WebSocketHITLAdapter:
 # ── Tests: get_status ─────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_status_empty(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -96,7 +96,7 @@ async def test_get_status_empty(
     assert ws.last_sent["waiting"] is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_status_with_waiting(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -122,7 +122,7 @@ async def test_get_status_with_waiting(
     assert ws.last_sent["waiting"]["stage_name"] == "Literature Review"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_status_with_session(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -142,7 +142,7 @@ async def test_get_status_with_session(
 # ── Tests: approve ────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_approve(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -163,7 +163,7 @@ async def test_approve(
     assert ws.last_sent["level"] == "success"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_approve_default_message(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -182,7 +182,7 @@ async def test_approve_default_message(
 # ── Tests: reject ─────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reject(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -206,7 +206,7 @@ async def test_reject(
 # ── Tests: edit ───────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_writes_files(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -247,7 +247,7 @@ async def test_edit_writes_files(
     assert "analysis.md" in data["edited_files"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_no_files_error(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -260,7 +260,7 @@ async def test_edit_no_files_error(
     assert ws.last_sent["level"] == "error"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_no_waiting_error(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -279,7 +279,7 @@ async def test_edit_no_waiting_error(
 # ── Tests: inject_guidance ────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_guidance(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -304,7 +304,7 @@ async def test_inject_guidance(
     assert ws.last_sent["level"] == "success"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_guidance_missing_fields(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -322,7 +322,7 @@ async def test_inject_guidance_missing_fields(
 # ── Tests: chat_message ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_message(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -344,7 +344,7 @@ async def test_chat_message(
     assert ws.last_sent["type"] == "chat_response"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_message_empty_ignored(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -360,7 +360,7 @@ async def test_chat_message_empty_ignored(
 # ── Tests: poll_and_push ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_poll_detects_new_waiting(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -386,7 +386,7 @@ async def test_poll_detects_new_waiting(
     assert ws.sent[0]["waiting"]["stage"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_poll_detects_waiting_removal(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -410,7 +410,7 @@ async def test_poll_detects_waiting_removal(
     assert ws.sent[1]["waiting"] is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_poll_no_duplicate_on_unchanged(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -435,7 +435,7 @@ async def test_poll_no_duplicate_on_unchanged(
 # ── Tests: outbound helpers ───────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_stage_output(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket
 ) -> None:
@@ -451,7 +451,7 @@ async def test_send_stage_output(
     assert len(ws.last_sent["files"]) == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_notification_levels(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket
 ) -> None:
@@ -466,7 +466,7 @@ async def test_send_notification_levels(
     assert ws.last_sent["detail"] == "Stage 3 needs review"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_notification_no_detail(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket
 ) -> None:
@@ -476,7 +476,7 @@ async def test_send_notification_no_detail(
     assert "detail" not in ws.last_sent
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_show_progress(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket
 ) -> None:
@@ -490,7 +490,7 @@ async def test_show_progress(
     assert ws.last_sent["progress"]["percent"] == 38
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_show_error(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket
 ) -> None:
@@ -504,7 +504,7 @@ async def test_show_error(
 # ── Tests: unknown message type ───────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unknown_message_type(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:
@@ -528,7 +528,7 @@ async def test_unknown_message_type(
 # ── Tests: run dir resolution ─────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_run_dir_exact(tmp_path: Path, ws: MockWebSocket) -> None:
     """Adapter resolves exact run directory name."""
     run_dir = tmp_path / "my-run"
@@ -541,7 +541,7 @@ async def test_resolve_run_dir_exact(tmp_path: Path, ws: MockWebSocket) -> None:
     assert adapter._run_dir == run_dir
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_run_dir_partial(tmp_path: Path, ws: MockWebSocket) -> None:
     """Adapter resolves run directory by partial match."""
     run_dir = tmp_path / "2026-03-28_my-run_abc123"
@@ -554,7 +554,7 @@ async def test_resolve_run_dir_partial(tmp_path: Path, ws: MockWebSocket) -> Non
     assert adapter._run_dir == run_dir
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_run_dir_missing(tmp_path: Path, ws: MockWebSocket) -> None:
     """Adapter handles missing run directory gracefully."""
     adapter = WebSocketHITLAdapter(
@@ -583,7 +583,7 @@ def test_collect_input_raises(ws: MockWebSocket, tmp_path: Path) -> None:
 # ── Tests: graceful stop ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop(adapter: WebSocketHITLAdapter) -> None:
     """stop() sets _running to False."""
     adapter._running = True
@@ -594,7 +594,7 @@ async def test_stop(adapter: WebSocketHITLAdapter) -> None:
 # ── Tests: response written with full HumanInput fields ───────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_response_has_timestamp(
     adapter: WebSocketHITLAdapter, ws: MockWebSocket, tmp_run: Path
 ) -> None:

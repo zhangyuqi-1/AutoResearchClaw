@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -14,6 +15,15 @@ from researchclaw.config import DockerSandboxConfig, ExperimentConfig
 from researchclaw.experiment.docker_sandbox import DockerSandbox, _next_container_name
 from researchclaw.experiment.factory import create_sandbox
 from researchclaw.experiment.sandbox import SandboxResult
+
+
+@pytest.fixture(autouse=True)
+def _sandbox_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    cache_home = home / ".cache"
+    cache_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache_home))
 
 
 # ── SandboxResult contract ─────────────────────────────────────────────
@@ -53,7 +63,7 @@ def test_build_run_command_network_none(tmp_path: Path):
     assert "--shm-size=2048m" in cmd
     assert cmd[-1] == "main.py"
     # Should contain --user on POSIX (non-root); skipped on Windows
-    if sys.platform != "win32":
+    if sys.platform != "win32" and hasattr(os, "getuid") and os.getuid() != 0:
         assert "--user" in cmd
 
 
@@ -77,7 +87,7 @@ def test_build_run_command_setup_only(tmp_path: Path):
     network_indices = [i for i, x in enumerate(cmd) if x == "--network"]
     assert len(network_indices) == 0
     # Should have --user on POSIX (runs as host user so experiment can write results.json)
-    if sys.platform != "win32":
+    if sys.platform != "win32" and hasattr(os, "getuid") and os.getuid() != 0:
         assert "--user" in cmd
 
 
@@ -94,7 +104,7 @@ def test_build_run_command_full_network(tmp_path: Path):
     network_indices = [i for i, x in enumerate(cmd) if x == "--network"]
     assert len(network_indices) == 0
     # Should have --user on POSIX (non-root)
-    if sys.platform != "win32":
+    if sys.platform != "win32" and hasattr(os, "getuid") and os.getuid() != 0:
         assert "--user" in cmd
 
 
