@@ -91,6 +91,11 @@ experiment:
     # Use ".venv/Scripts/python.exe" on Windows
     python_path: ".venv/bin/python3"
     gpu_required: false
+    network_policy: "full"      # full | none
+    auto_install_deps: true     # run pip install -r requirements.txt if present
+    pip_timeout_sec: 300
+    setup_timeout_sec: 300
+    data_root: ""               # empty = auto sandbox cache dir
     max_memory_mb: 4096
   # Docker sandbox settings (only used when mode: "docker")
   # Build image first: docker build -t researchclaw/experiment:latest researchclaw/docker/
@@ -210,6 +215,19 @@ experiment:
 # Copy prompts.default.yaml, edit the prompts you want, and set the path here.
 prompts:
   custom_file: ""  # e.g. "my_prompts.yaml" (empty = use built-in defaults)
+
+
+# === Export ===
+# target_conference controls the LaTeX template family.
+# submission_profile controls paper structure/style constraints.
+# docx_page_limit and max_references are generic hard limits; 0 disables them.
+export:
+  target_conference: "neurips_2025"
+  authors: "Anonymous"
+  bib_file: "references"
+  submission_profile: "default"  # default | ei_conference
+  docx_page_limit: 0             # 0 = disabled, e.g. 10 for EI submissions
+  max_references: 0              # 0 = disabled, e.g. 20 for capped venues
 
 
 # === MetaClaw Integration ===

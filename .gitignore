@@ -98,3 +98,5 @@ docs/tester_guide_cn.*
 
 .idea
 knowledge_base/*
+.codex/
+.sandbox_data/*

@@ -1,13 +1,13 @@
 # === 项目 ===
 project:
-  name: "my-research"              # 项目标识符
+  name: "prmvai2026-tabular-ai"              # 项目标识符
   mode: "full-auto"               # docs-first | semi-auto | full-auto
 
 # === 研究 ===
 research:
-  topic: "LLM-GNN fusion for cross-project software vulnerability detection based on multimodal code representation learning"                     # 研究主题（必填）
-  paper_title: "LLM-GNN Fusion: Cross-Project Software Vulnerability Detection via Multimodal Code Representation Learning"               # 论文标题（轻量约束；为空则由模型生成）
-  domains: [ "software vulnerability detection", "software engineering", "graph neural networks", "large language models", "multimodal code representation learning", "cross-project learning" ]           # 文献搜索的研究领域
+  topic: "Explainable feature selection and ensemble learning for imbalanced tabular classification with efficient benchmark comparison and robustness analysis"
+  paper_title: "An Explainable Feature Selection and Ensemble Learning Framework for Imbalanced Tabular Classification"
+  domains: [ "artificial intelligence", "machine learning", "imbalanced classification", "tabular data classification", "feature selection", "ensemble learning", "explainable AI", "data mining" ]
   daily_paper_count: 10             # 每个搜索查询的目标论文数
   quality_threshold: 4.0           # 论文最低质量分
 
@@ -44,12 +44,13 @@ experiment:
     python_path: ".venv/bin/python"
     gpu_required: true
     max_memory_mb: 10240
+    data_root: "/isilon_ai_data/zhangyq/AutoResearchClaw/.sandbox_data"
   opencode: # OpenCode Beast Mode（通过 `researchclaw setup` 自动安装）
     enabled: true                    # 主开关（默认：true）
     auto: true                       # 无需确认自动触发（默认：true）
     complexity_threshold: 0.2        # 0.0-1.0 — 越高 = 仅在复杂实验时触发
     model: "gpt-5.4"  # 使用本机 opencode 已配置的模型登录态
-    timeout_sec: 1800                 # OpenCode 生成最大秒数
+    timeout_sec: 3600                 # OpenCode 生成最大秒数
     max_retries: 3                   # 失败重试次数
     workspace_cleanup: true          # 采集后清理临时工作区
   code_agent: # CodeAgent v2 — 多阶段代码生成
@@ -61,7 +62,7 @@ experiment:
     exec_fix_max_iterations: 3       # 执行修复循环最大次数
     exec_fix_timeout_sec: 60         # 每次执行修复超时（秒）
   benchmark_agent: # BenchmarkAgent — 自动数据集和基线选择
-    enabled: false                    # 启用 4-agent 基准测试流水线（Surveyor→Selector→Acquirer→Validator）
+    enabled: true                    # 启用 4-agent 基准测试流水线（Surveyor→Selector→Acquirer→Validator）
     enable_hf_search: true           # 搜索 HuggingFace Datasets
     enable_web_search: true          # 搜索 Google Scholar 获取基准
     tier_limit: 2                    # 数据集级别过滤（1=小型/已缓存，2=中型，3=大型）
@@ -106,9 +107,12 @@ web_search:
 
 # === 导出 ===
 export:
-  target_conference: "neurips_2025"  # neurips_2025 | iclr_2026 | icml_2026
+  target_conference: "neurips_2025"  # 目前仅控制 LaTeX 模板族 neurips_2025 | iclr_2026 | icml_2026
   authors: "Anonymous"
   bib_file: "references"
+  submission_profile: "ei_conference"
+  docx_page_limit: 10
+  max_references: 20
 
 # === 通知 ===
 notifications:

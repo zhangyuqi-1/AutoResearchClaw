@@ -104,6 +104,7 @@ EXPERIMENT_MODES = {
     "agentic",
 }
 CLI_AGENT_PROVIDERS = {"llm", "claude_code", "codex"}
+SUBMISSION_PROFILES = {"default", "ei_conference"}
 
 
 def _get_by_path(data: dict[str, Any], dotted_key: str) -> Any:
@@ -213,6 +214,11 @@ class SecurityConfig:
 class SandboxConfig:
     python_path: str = DEFAULT_PYTHON_PATH
     gpu_required: bool = False
+    network_policy: str = "full"  # full | none (local sandbox does not emulate setup_only)
+    auto_install_deps: bool = True
+    pip_timeout_sec: int = 300
+    setup_timeout_sec: int = 300
+    data_root: str = ""
     allowed_imports: tuple[str, ...] = (
         "math",
         "random",
@@ -517,6 +523,9 @@ class ExportConfig:
     target_conference: str = "neurips_2025"
     authors: str = "Anonymous"
     bib_file: str = "references"
+    submission_profile: str = "default"
+    docx_page_limit: int = 0
+    max_references: int = 0
 
 
 @dataclass(frozen=True)
@@ -842,6 +851,9 @@ class RCConfig:
                 target_conference=export.get("target_conference", "neurips_2025"),
                 authors=export.get("authors", "Anonymous"),
                 bib_file=export.get("bib_file", "references"),
+                submission_profile=export.get("submission_profile", "default"),
+                docx_page_limit=int(export.get("docx_page_limit", 0)),
+                max_references=int(export.get("max_references", 0)),
             ),
             prompts=PromptsConfig(
                 custom_file=prompts.get("custom_file", ""),
@@ -954,6 +966,24 @@ def validate_config(
     if not _is_blank(exp_direction) and exp_direction not in ("minimize", "maximize"):
         errors.append(f"Invalid experiment.metric_direction: {exp_direction}")
 
+    submission_profile = _get_by_path(data, "export.submission_profile")
+    if (
+        not _is_blank(submission_profile)
+        and submission_profile not in SUBMISSION_PROFILES
+    ):
+        errors.append(f"Invalid export.submission_profile: {submission_profile}")
+
+    for limit_key in ("docx_page_limit", "max_references"):
+        limit_value = _get_by_path(data, f"export.{limit_key}")
+        if limit_value is None:
+            continue
+        if (
+            isinstance(limit_value, bool)
+            or not isinstance(limit_value, int)
+            or limit_value < 0
+        ):
+            errors.append(f"Invalid export.{limit_key}: {limit_value}")
+
     cli_agent_provider = _get_by_path(data, "experiment.cli_agent.provider")
     if (
         not _is_blank(cli_agent_provider)
@@ -1035,6 +1065,14 @@ def _parse_experiment_config(data: dict[str, Any]) -> ExperimentConfig:
         sandbox=SandboxConfig(
             python_path=sandbox_data.get("python_path", DEFAULT_PYTHON_PATH),
             gpu_required=bool(sandbox_data.get("gpu_required", False)),
+            network_policy=_validate_network_policy(
+                sandbox_data.get("network_policy", "full"),
+                default="full",
+            ),
+            auto_install_deps=bool(sandbox_data.get("auto_install_deps", True)),
+            pip_timeout_sec=_safe_int(sandbox_data.get("pip_timeout_sec"), 300),
+            setup_timeout_sec=_safe_int(sandbox_data.get("setup_timeout_sec"), 300),
+            data_root=str(sandbox_data.get("data_root", "")),
             allowed_imports=tuple(
                 sandbox_data.get("allowed_imports", SandboxConfig.allowed_imports)
             ),

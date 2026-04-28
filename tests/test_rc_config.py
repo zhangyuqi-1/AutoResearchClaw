@@ -6,6 +6,7 @@ import pytest
 
 from researchclaw.config import (
     ExperimentConfig,
+    ExportConfig,
     RCConfig,
     SandboxConfig,
     SecurityConfig,
@@ -298,6 +299,17 @@ def test_experiment_config_defaults_mode_is_simulated():
     assert defaults.metric_direction == "minimize"
 
 
+def test_export_config_defaults_match_expected_values():
+    defaults = ExportConfig()
+
+    assert defaults.target_conference == "neurips_2025"
+    assert defaults.authors == "Anonymous"
+    assert defaults.bib_file == "references"
+    assert defaults.submission_profile == "default"
+    assert defaults.docx_page_limit == 0
+    assert defaults.max_references == 0
+
+
 def test_sandbox_config_defaults_match_expected_values():
     from researchclaw.config import DEFAULT_PYTHON_PATH
 
@@ -305,6 +317,11 @@ def test_sandbox_config_defaults_match_expected_values():
 
     assert defaults.python_path == DEFAULT_PYTHON_PATH
     assert defaults.gpu_required is False
+    assert defaults.network_policy == "full"
+    assert defaults.auto_install_deps is True
+    assert defaults.pip_timeout_sec == 300
+    assert defaults.setup_timeout_sec == 300
+    assert defaults.data_root == ""
     assert defaults.max_memory_mb == 4096
     assert "numpy" in defaults.allowed_imports
 
@@ -367,6 +384,86 @@ def test_rcconfig_from_dict_uses_default_security_when_missing(tmp_path: Path):
 
     config = RCConfig.from_dict(data, project_root=tmp_path, check_paths=False)
     assert config.security.hitl_required_stages == (5, 9, 20)
+
+
+def test_rcconfig_from_dict_parses_export_submission_profile_and_limits(
+    tmp_path: Path,
+):
+    data = _valid_config_data()
+    data["export"] = {
+        "target_conference": "iclr_2026",
+        "authors": "Example Authors",
+        "bib_file": "custom_refs",
+        "submission_profile": "ei_conference",
+        "docx_page_limit": 10,
+        "max_references": 20,
+    }
+
+    config = RCConfig.from_dict(data, project_root=tmp_path, check_paths=False)
+
+    assert config.export.target_conference == "iclr_2026"
+    assert config.export.authors == "Example Authors"
+    assert config.export.bib_file == "custom_refs"
+    assert config.export.submission_profile == "ei_conference"
+    assert config.export.docx_page_limit == 10
+    assert config.export.max_references == 20
+
+
+def test_rcconfig_from_dict_parses_sandbox_download_fields(tmp_path: Path):
+    data = _valid_config_data()
+    data["experiment"]["mode"] = "sandbox"
+    data["experiment"]["sandbox"] = {
+        "python_path": "/usr/bin/python3",
+        "gpu_required": True,
+        "network_policy": "none",
+        "auto_install_deps": False,
+        "pip_timeout_sec": 90,
+        "setup_timeout_sec": 120,
+        "data_root": "shared-data",
+        "max_memory_mb": 8192,
+    }
+
+    config = RCConfig.from_dict(data, project_root=tmp_path, check_paths=False)
+
+    assert config.experiment.sandbox.python_path == "/usr/bin/python3"
+    assert config.experiment.sandbox.gpu_required is True
+    assert config.experiment.sandbox.network_policy == "none"
+    assert config.experiment.sandbox.auto_install_deps is False
+    assert config.experiment.sandbox.pip_timeout_sec == 90
+    assert config.experiment.sandbox.setup_timeout_sec == 120
+    assert config.experiment.sandbox.data_root == "shared-data"
+    assert config.experiment.sandbox.max_memory_mb == 8192
+
+
+def test_validate_config_rejects_invalid_export_submission_profile(tmp_path: Path):
+    data = _valid_config_data()
+    data["export"] = {"submission_profile": "ei_journal"}
+
+    result = validate_config(data, project_root=tmp_path, check_paths=False)
+
+    assert result.ok is False
+    assert "Invalid export.submission_profile: ei_journal" in result.errors
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("docx_page_limit", -1),
+        ("docx_page_limit", "10"),
+        ("max_references", -5),
+        ("max_references", 2.5),
+    ),
+)
+def test_validate_config_rejects_invalid_export_limits(
+    tmp_path: Path, field: str, value: object
+):
+    data = _valid_config_data()
+    data["export"] = {field: value}
+
+    result = validate_config(data, project_root=tmp_path, check_paths=False)
+
+    assert result.ok is False
+    assert f"Invalid export.{field}: {value}" in result.errors
 
 
 def test_load_uses_file_parent_as_default_project_root(tmp_path: Path):
