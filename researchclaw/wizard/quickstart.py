@@ -8,6 +8,87 @@ from typing import Any
 from researchclaw.wizard.templates import TEMPLATES
 
 
+_WIZARD_PROVIDER_DEFAULTS = {
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "primary_model": "gpt-4o",
+        "fallback_models": ["gpt-4.1", "gpt-4o-mini"],
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "primary_model": "anthropic/claude-3.5-sonnet",
+        "fallback_models": [
+            "google/gemini-pro-1.5",
+            "meta-llama/llama-3.1-70b-instruct",
+        ],
+    },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "primary_model": "deepseek-chat",
+        "fallback_models": ["deepseek-reasoner"],
+    },
+    "minimax": {
+        "base_url": "https://api.minimaxi.com/v1",
+        "api_key_env": "MINIMAX_API_KEY",
+        "primary_model": "MiniMax-M2.5",
+        "fallback_models": ["MiniMax-M2.5-highspeed"],
+    },
+    "volcengine": {
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "api_key_env": "VOLCENGINE_API_KEY",
+        "primary_model": "doubao-seed-2-0-pro-260215",
+        "fallback_models": [
+            "doubao-seed-2-0-lite-260215",
+            "doubao-seed-2-0-mini-260215",
+            "doubao-seed-2-0-code-preview-260215",
+            "kimi-k2-5-260127",
+            "glm-4-7-251222",
+            "deepseek-v3-2-251201",
+        ],
+    },
+    "volcengine-coding-plan": {
+        "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        "api_key_env": "VOLCENGINE_API_KEY",
+        "primary_model": "doubao-seed-2.0-code",
+        "fallback_models": [
+            "doubao-seed-2.0-pro",
+            "doubao-seed-2.0-lite",
+            "doubao-seed-code",
+            "minimax-m2.5",
+            "glm-4.7",
+            "deepseek-v3.2",
+            "kimi-k2.5",
+        ],
+    },
+    "byteplus": {
+        "base_url": "https://ark.ap-southeast.bytepluses.com/api/v3",
+        "api_key_env": "BYTEPLUS_API_KEY",
+        "primary_model": "seed-2-0-pro-260328",
+        "fallback_models": [
+            "seed-2-0-lite-260228",
+            "seed-2-0-mini-260215",
+            "kimi-k2-5-260127",
+            "glm-4-7-251222",
+        ],
+    },
+    "byteplus-coding-plan": {
+        "base_url": "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
+        "api_key_env": "BYTEPLUS_API_KEY",
+        "primary_model": "dola-seed-2.0-pro",
+        "fallback_models": [
+            "dola-seed-2.0-lite",
+            "bytedance-seed-code",
+            "glm-4.7",
+            "kimi-k2.5",
+            "gpt-oss-120b",
+        ],
+    },
+}
+
+
 class QuickStartWizard:
     """Interactive configuration generator."""
 
@@ -61,7 +142,18 @@ class QuickStartWizard:
         print("\n--- LLM Configuration ---")
         provider = self._choose(
             "LLM provider",
-            ["openai-compatible", "acp"],
+            [
+                "openai-compatible",
+                "openai",
+                "openrouter",
+                "deepseek",
+                "minimax",
+                "volcengine",
+                "volcengine-coding-plan",
+                "byteplus",
+                "byteplus-coding-plan",
+                "acp",
+            ],
             default="openai-compatible",
         )
         config["llm"] = {"provider": provider}
@@ -75,6 +167,8 @@ class QuickStartWizard:
                 "api_key_env": api_key_env,
                 "primary_model": model,
             })
+        elif provider != "acp":
+            config["llm"].update(_WIZARD_PROVIDER_DEFAULTS[provider])
 
         # 6. Output format
         conference = self._choose(

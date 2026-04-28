@@ -648,7 +648,11 @@ _PROVIDER_CHOICES = {
     "2": ("openrouter", "OPENROUTER_API_KEY"),
     "3": ("deepseek", "DEEPSEEK_API_KEY"),
     "4": ("minimax", "MINIMAX_API_KEY"),
-    "5": ("acp", ""),
+    "5": ("volcengine", "VOLCENGINE_API_KEY"),
+    "6": ("volcengine-coding-plan", "VOLCENGINE_API_KEY"),
+    "7": ("byteplus", "BYTEPLUS_API_KEY"),
+    "8": ("byteplus-coding-plan", "BYTEPLUS_API_KEY"),
+    "9": ("acp", ""),
 }
 
 _PROVIDER_URLS = {
@@ -656,6 +660,10 @@ _PROVIDER_URLS = {
     "openrouter": "https://openrouter.ai/api/v1",
     "deepseek": "https://api.deepseek.com/v1",
     "minimax": "https://api.minimaxi.com/v1",
+    "volcengine": "https://ark.cn-beijing.volces.com/api/v3",
+    "volcengine-coding-plan": "https://ark.cn-beijing.volces.com/api/coding/v3",
+    "byteplus": "https://ark.ap-southeast.bytepluses.com/api/v3",
+    "byteplus-coding-plan": "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
 }
 
 _PROVIDER_MODELS = {
@@ -666,6 +674,48 @@ _PROVIDER_MODELS = {
     ),
     "deepseek": ("deepseek-chat", ["deepseek-reasoner"]),
     "minimax": ("MiniMax-M2.5", ["MiniMax-M2.5-highspeed"]),
+    "volcengine": (
+        "doubao-seed-2-0-pro-260215",
+        [
+            "doubao-seed-2-0-lite-260215",
+            "doubao-seed-2-0-mini-260215",
+            "doubao-seed-2-0-code-preview-260215",
+            "kimi-k2-5-260127",
+            "glm-4-7-251222",
+            "deepseek-v3-2-251201",
+        ],
+    ),
+    "volcengine-coding-plan": (
+        "doubao-seed-2.0-code",
+        [
+            "doubao-seed-2.0-pro",
+            "doubao-seed-2.0-lite",
+            "doubao-seed-code",
+            "minimax-m2.5",
+            "glm-4.7",
+            "deepseek-v3.2",
+            "kimi-k2.5",
+        ],
+    ),
+    "byteplus": (
+        "seed-2-0-pro-260328",
+        [
+            "seed-2-0-lite-260228",
+            "seed-2-0-mini-260215",
+            "kimi-k2-5-260127",
+            "glm-4-7-251222",
+        ],
+    ),
+    "byteplus-coding-plan": (
+        "dola-seed-2.0-pro",
+        [
+            "dola-seed-2.0-lite",
+            "bytedance-seed-code",
+            "glm-4.7",
+            "kimi-k2.5",
+            "gpt-oss-120b",
+        ],
+    ),
 }
 
 
@@ -701,7 +751,17 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("  2) openrouter   (requires OPENROUTER_API_KEY)")
         print("  3) deepseek     (requires DEEPSEEK_API_KEY)")
         print("  4) minimax      (requires MINIMAX_API_KEY)")
-        print("  5) acp          (local AI agent — no API key needed)")
+        print("  5) volcengine   (requires VOLCENGINE_API_KEY)")
+        print(
+            "  6) volcengine-coding-plan"
+            " (requires VOLCENGINE_API_KEY)"
+        )
+        print("  7) byteplus     (requires BYTEPLUS_API_KEY)")
+        print(
+            "  8) byteplus-coding-plan"
+            " (requires BYTEPLUS_API_KEY)"
+        )
+        print("  9) acp          (local AI agent — no API key needed)")
         try:
             raw = input("Choice [1]: ").strip()
         except (EOFError, KeyboardInterrupt):

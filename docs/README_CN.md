@@ -596,7 +596,7 @@ runtime:
 
 # === LLM ===
 llm:
-  provider: "openai-compatible"    # openai | openrouter | deepseek | minimax | acp | openai-compatible
+  provider: "openai-compatible"    # openai | openrouter | deepseek | minimax | volcengine | volcengine-coding-plan | byteplus | byteplus-coding-plan | acp | openai-compatible
   base_url: "https://..."          # API 端点（openai-compatible 必填）
   api_key_env: "OPENAI_API_KEY"    # API key 环境变量（openai-compatible 必填）
   api_key: ""                      # 或直接填写 key
@@ -606,6 +606,12 @@ llm:
   acp:                             # 仅在 provider: "acp" 时使用
     agent: "claude"                # ACP Agent CLI 命令（claude, codex, gemini 等）
     cwd: "."                       # Agent 的工作目录
+
+# 通过 `researchclaw init` 可直接选择以下预设：
+#   volcengine                 -> VOLCENGINE_API_KEY
+#   volcengine-coding-plan     -> VOLCENGINE_API_KEY
+#   byteplus                   -> BYTEPLUS_API_KEY
+#   byteplus-coding-plan       -> BYTEPLUS_API_KEY
 
 # === 实验 ===
 experiment:

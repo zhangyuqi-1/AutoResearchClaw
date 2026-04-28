@@ -116,6 +116,21 @@ def test_check_llm_connectivity_pass() -> None:
     assert result.status == "pass"
 
 
+def test_check_llm_connectivity_uses_get_probe() -> None:
+    def fake_urlopen(
+        req: urllib.request.Request, timeout: int
+    ) -> _DummyHTTPResponse:
+        assert req.get_method() == "GET"
+        assert req.full_url == "https://api.example.com/v1/models"
+        assert timeout == 5
+        return _DummyHTTPResponse(status=200)
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = health.check_llm_connectivity("https://api.example.com/v1")
+
+    assert result.status == "pass"
+
+
 def test_check_llm_connectivity_timeout() -> None:
     with patch(
         "urllib.request.urlopen",

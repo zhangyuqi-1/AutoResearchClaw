@@ -596,7 +596,7 @@ runtime:
 
 # === LLM ===
 llm:
-  provider: "openai-compatible"    # openai | openrouter | deepseek | minimax | acp | openai-compatible
+  provider: "openai-compatible"    # openai | openrouter | deepseek | minimax | volcengine | volcengine-coding-plan | byteplus | byteplus-coding-plan | acp | openai-compatible
   base_url: "https://..."          # API endpoint (required for openai-compatible)
   api_key_env: "OPENAI_API_KEY"    # Env var for API key (required for openai-compatible)
   api_key: ""                      # Or hardcode key here
@@ -606,6 +606,12 @@ llm:
   acp:                             # Only used when provider: "acp"
     agent: "claude"                # ACP agent CLI command (claude, codex, gemini, etc.)
     cwd: "."                       # Working directory for the agent
+
+# Volcengine / BytePlus presets via `researchclaw init`
+#   volcengine                 -> VOLCENGINE_API_KEY
+#   volcengine-coding-plan     -> VOLCENGINE_API_KEY
+#   byteplus                   -> BYTEPLUS_API_KEY
+#   byteplus-coding-plan       -> BYTEPLUS_API_KEY
 
 # === Experiment ===
 experiment:

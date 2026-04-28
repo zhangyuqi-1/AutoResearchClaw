@@ -51,6 +51,26 @@ llm:
   # primary_model: "MiniMax-M2.5"
   # fallback_models:
   #   - "MiniMax-M2.5-highspeed"
+  # --- Volcengine provider examples ---
+  # provider: "volcengine"
+  # base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  # api_key_env: "VOLCENGINE_API_KEY"
+  # primary_model: "doubao-seed-2-0-pro-260215"
+  #
+  # provider: "volcengine-coding-plan"
+  # base_url: "https://ark.cn-beijing.volces.com/api/coding/v3"
+  # api_key_env: "VOLCENGINE_API_KEY"
+  # primary_model: "doubao-seed-2.0-code"
+  #
+  # provider: "byteplus"
+  # base_url: "https://ark.ap-southeast.bytepluses.com/api/v3"
+  # api_key_env: "BYTEPLUS_API_KEY"
+  # primary_model: "seed-2-0-pro-260328"
+  #
+  # provider: "byteplus-coding-plan"
+  # base_url: "https://ark.ap-southeast.bytepluses.com/api/coding/v3"
+  # api_key_env: "BYTEPLUS_API_KEY"
+  # primary_model: "dola-seed-2.0-pro"
 
 security:
   hitl_required_stages: [5, 9, 20]

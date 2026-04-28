@@ -32,6 +32,18 @@ PROVIDER_PRESETS = {
     "minimax": {
         "base_url": "https://api.minimaxi.com/v1",
     },
+    "volcengine": {
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+    },
+    "volcengine-coding-plan": {
+        "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+    },
+    "byteplus": {
+        "base_url": "https://ark.ap-southeast.bytepluses.com/api/v3",
+    },
+    "byteplus-coding-plan": {
+        "base_url": "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
+    },
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta",
     },
@@ -52,6 +64,12 @@ def create_llm_client(config: RCConfig) -> LLMClient | ACPClient:
     - ``"deepseek"`` → :class:`LLMClient` with DeepSeek base URL
     - ``"novita"`` → :class:`LLMClient` with Novita AI base URL
     - ``"minimax"`` → :class:`LLMClient` with MiniMax base URL
+    - ``"volcengine"`` → :class:`LLMClient` with Volcengine ARK base URL
+    - ``"volcengine-coding-plan"`` → :class:`LLMClient` with Volcengine
+      Coding Plan base URL
+    - ``"byteplus"`` → :class:`LLMClient` with BytePlus ModelArk base URL
+    - ``"byteplus-coding-plan"`` → :class:`LLMClient` with BytePlus
+      Coding Plan base URL
     - ``"gemini"`` → :class:`LLMClient` with Gemini Native Adapter
     - ``"openai-compatible"`` (default) → :class:`LLMClient` with custom base_url
 
