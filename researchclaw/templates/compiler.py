@@ -42,6 +42,16 @@ _CYRILLIC_TO_LATIN_MAP: dict[str, str] = {
 }
 
 
+def _resolve_tex_binary(name: str) -> str | None:
+    preferred_root = Path("/usr/local/texlive")
+    if preferred_root.is_dir():
+        candidates = sorted(preferred_root.glob(f"*/bin/*/{name}"), reverse=True)
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+    return shutil.which(name)
+
+
 @dataclass
 class CompileResult:
     """Outcome of a LaTeX compilation attempt."""
@@ -77,7 +87,7 @@ def compile_latex(
     CompileResult
         Contains success flag, log excerpt, errors found, and fixes applied.
     """
-    if not shutil.which("pdflatex"):
+    if not _resolve_tex_binary("pdflatex"):
         return CompileResult(
             success=False,
             log_excerpt="pdflatex not found on PATH",
@@ -823,9 +833,12 @@ def _run_pdflatex(
     which cause ``UnicodeDecodeError`` with ``text=True`` and kill the
     entire compilation pipeline — bibtex never runs, all citations [?].
     """
+    pdflatex_bin = _resolve_tex_binary("pdflatex")
+    if not pdflatex_bin:
+        return None, False
     try:
         proc = subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", tex_name],
+            [pdflatex_bin, "-interaction=nonstopmode", tex_name],
             cwd=work_dir,
             capture_output=True,
             timeout=timeout,
@@ -898,12 +911,13 @@ def _run_bibtex(work_dir: Path, stem: str, timeout: int = 60) -> bool:
     to avoid ``UnicodeDecodeError`` from non-ASCII bib content.  Logs
     failures so that silent bibtex issues are diagnosable.
     """
-    if not shutil.which("bibtex"):
+    bibtex_bin = _resolve_tex_binary("bibtex")
+    if not bibtex_bin:
         logger.warning("bibtex not found on PATH — citations will be [?]")
         return False
     try:
         proc = subprocess.run(
-            ["bibtex", stem],
+            [bibtex_bin, stem],
             cwd=work_dir,
             capture_output=True,
             timeout=timeout,

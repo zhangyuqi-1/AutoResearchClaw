@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -735,6 +736,72 @@ def test_package_stage24_deliverables_collects_stage24_outputs(
     assert (dest / "verification_report.json").exists()
     assert (dest / "sanitization_report.json").exists()
     assert (run_dir / "My_Paper__repaired_.zip").exists()
+
+
+def test_package_stage24_submission_archive_filters_to_submission_files(
+    run_dir: Path, rc_config: RCConfig
+) -> None:
+    _setup_stage_artifacts(run_dir)
+    s22 = run_dir / "stage-22"
+    s24 = run_dir / "stage-24"
+    (s22 / "code" / "setup.py").write_text(
+        "import os\nprint(os.environ['RC_DATA_DIR'])\n", encoding="utf-8"
+    )
+    (s22 / "ieee.cls").write_text("\\ProvidesClass{ieee}\n", encoding="utf-8")
+    (s22 / "custom.sty").write_text("\\ProvidesPackage{custom}\n", encoding="utf-8")
+    (s22 / "custom.bst").write_text("ENTRY{}\n", encoding="utf-8")
+    (s24 / "codex_review.json").write_text("{}", encoding="utf-8")
+    (s24 / "editorial_review.json").write_text("{}", encoding="utf-8")
+    (s24 / "docx_quality.json").write_text("{}", encoding="utf-8")
+    (s24 / "charts" / "framework_diagram_prompt.md").write_text(
+        "# helper prompt\n", encoding="utf-8"
+    )
+
+    rc_runner._package_stage24_deliverables(run_dir, "run-stage24-submission-only")
+
+    archive_path = run_dir / "My_Paper__repaired_.zip"
+    with zipfile.ZipFile(archive_path) as zf:
+        names = set(zf.namelist())
+        assert "paper.tex" in names
+        assert "paper.pdf" in names
+        assert "paper_final.docx" in names
+        assert "references.bib" in names
+        assert "charts/fig_main.png" in names
+        assert "code/main.py" in names
+        assert "code/setup.py" in names
+        assert "data/README.md" in names
+        assert "ieee.cls" in names
+        assert "custom.sty" in names
+        assert "custom.bst" in names
+        assert "paper_final.md" not in names
+        assert "manifest.json" not in names
+        assert "verification_report.json" not in names
+        assert "sanitization_report.json" not in names
+        assert "codex_review.json" not in names
+        assert "editorial_review.json" not in names
+        assert "docx_quality.json" not in names
+        assert "charts/framework_diagram_prompt.md" not in names
+        assert not any(name.startswith("deliverables_stage24/") for name in names)
+        readme = zf.read("data/README.md").decode("utf-8")
+        assert "code/setup.py" in readme
+        assert "RC_DATA_DIR" in readme
+
+
+def test_package_stage24_submission_archive_includes_run_local_data(
+    run_dir: Path, rc_config: RCConfig
+) -> None:
+    _setup_stage_artifacts(run_dir)
+    data_dir = run_dir / "stage-22" / "data"
+    data_dir.mkdir()
+    (data_dir / "adult.csv").write_text("label,score\n1,0.91\n", encoding="utf-8")
+
+    rc_runner._package_stage24_deliverables(run_dir, "run-stage24-real-data")
+
+    archive_path = run_dir / "My_Paper__repaired_.zip"
+    with zipfile.ZipFile(archive_path) as zf:
+        names = set(zf.namelist())
+        assert "data/adult.csv" in names
+        assert "data/README.md" not in names
 
 
 def test_package_stage24_deliverables_returns_none_when_stage24_missing(

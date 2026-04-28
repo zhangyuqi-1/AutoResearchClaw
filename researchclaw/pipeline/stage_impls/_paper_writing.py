@@ -37,6 +37,89 @@ from researchclaw.prompts import PromptManager
 logger = logging.getLogger(__name__)
 
 
+def _shared_submission_rules(submission_profile: str) -> str:
+    rules = [
+        "COMMON SUBMISSION RULES:",
+        "- Add a **Keywords:** block immediately after the abstract body.",
+        "- Keep inline math inline; do NOT promote inline symbols into display equations.",
+        "- Every display equation must appear in its own standalone block and be written so it can receive numbering downstream.",
+        "- Every display equation must be introduced by a complete lead-in sentence.",
+        "- After every display equation, explicitly explain each parameter or symbol in prose.",
+        "- Do NOT leave dangling punctuation before or inside display equations.",
+    ]
+    if submission_profile == "ei_conference":
+        rules.extend(
+            [
+                "- Do NOT create a standalone Related Work section.",
+                "- Use `Results and Analysis` as the main results chapter title.",
+                "- Do NOT create standalone Discussion or Limitations sections; fold both into Conclusion.",
+            ]
+        )
+    return "\n".join(rules) + "\n\n"
+
+
+def _section_plan_for_profile(submission_profile: str) -> tuple[str, str]:
+    if submission_profile == "ei_conference":
+        call1 = (
+            "1. **Title** (HARD RULE: MUST be 14 words or fewer. Create a catchy method name "
+            "first, then build the title: 'MethodName: Subtitle'. If your title exceeds 14 words, "
+            "it will be automatically rejected. NEVER use 'Untitled Paper'.)\n"
+            "2. **Abstract** (150-220 words — HARD LIMIT. Do NOT exceed 220 words. "
+            "Do NOT include raw metric paths or 16-digit decimals.)\n"
+            "3. **Introduction** (1100-1400 words): real-world motivation, problem statement, "
+            "research gap analysis with citations, concise positioning against prior work without a standalone "
+            "Related Work section, method overview, 3-4 contributions as bullet points, paper organization paragraph. "
+            "MUST cite 10-14 references.\n"
+        )
+        call3 = (
+            "7. **Results and Analysis** (900-1200 words):\n"
+            "   - START with an AGGREGATED results table (Table 1): rows = methods, columns = metrics.\n"
+            "     Each cell = mean ± std across seeds. Bold the best value per column.\n"
+            "   - Include 3-4 coherent subsections covering overall results, ablation analysis, "
+            "     metric-by-metric analysis (e.g. F1/ACC), and robustness or error analysis.\n"
+            "   - Include at least 2 figures using markdown image syntax: ![Caption](charts/filename.png)\n"
+            "8. **Conclusion** (180-260 words): summarize contributions, restate the main findings, "
+            "and integrate discussion points, limitations, and future work into this section without separate headings.\n"
+        )
+        return call1, call3
+
+    call1 = (
+        "1. **Title** (HARD RULE: MUST be 14 words or fewer. Create a catchy method name "
+        "first, then build the title: 'MethodName: Subtitle'. If your title exceeds 14 words, "
+        "it will be automatically rejected. NEVER use 'Untitled Paper'.)\n"
+        "2. **Abstract** (150-220 words — HARD LIMIT. Do NOT exceed 220 words. "
+        "Do NOT include raw metric paths or 16-digit decimals.)\n"
+        "3. **Introduction** (800-1000 words): real-world motivation, problem statement, "
+        "research gap analysis with citations, method overview, 3-4 contributions as bullet points, "
+        "paper organization paragraph. MUST cite 8-12 references.\n"
+        "4. **Related Work** (600-800 words): organized into 3-4 thematic subsections, each discussing "
+        "4-5 papers with proper citations. Compare approaches, identify limitations, position this work.\n"
+    )
+    call3 = (
+        "7. **Results** (600-800 words):\n"
+        "   - START with an AGGREGATED results table (Table 1): rows = methods, columns = metrics.\n"
+        "     Each cell = mean ± std across seeds. Bold the best value per column.\n"
+        "     EVERY table MUST have a descriptive caption that allows understanding without "
+        "     reading the main text. NEVER use just 'Table 1' as a caption.\n"
+        "   - Follow with a PER-REGIME table (Table 2) breaking down by easy/hard regimes.\n"
+        "   - Include a STATISTICAL COMPARISON table (Table 3): paired t-tests between key methods.\n"
+        "   - NEVER dump raw per-seed numbers in the main text. Aggregate first, then discuss.\n"
+        "   - MUST include at least 2 figures using markdown image syntax: ![Caption](charts/filename.png)\n"
+        "     One figure MUST be a performance comparison chart. Figures MUST be referenced "
+        "     in text: 'As shown in Figure 1, ...'\n"
+        "8. **Discussion** (400-600 words): interpretation of key findings, unexpected results, "
+        "comparison with prior work (CITE 3-5 papers here!), practical implications.\n"
+        "9. **Limitations** (200-300 words): honest assessment of scope, dataset, methodology. "
+        "ALL caveats consolidated HERE — nowhere else in the paper.\n"
+        "10. **Conclusion** (100-200 words MAXIMUM — this is a HARD LIMIT): "
+        "Summarize contributions in 2-3 sentences. State main finding in 1 sentence. "
+        "Suggest 2-3 concrete future directions in 1-2 sentences. "
+        "Do NOT repeat any specific numbers from Results. Do NOT restate the abstract. "
+        "A good conclusion is SHORT and forward-looking.\n"
+    )
+    return call1, call3
+
+
 def _topic_is_literature_first(config: RCConfig) -> bool:
     """Return True when the topic is a survey/review or the project uses docs-first mode.
 
@@ -334,9 +417,10 @@ def _write_paper_sections(
     topic_constraint: str,
     exp_metrics_instruction: str,
     citation_instruction: str,
-    exact_title_instruction: str,
-    outline: str,
+    exact_title_instruction: str = "",
+    outline: str = "",
     model_name: str = "",
+    submission_profile: str = "default",
 ) -> str:
     """Write a conference-grade paper in 3 sequential LLM calls.
 
@@ -393,6 +477,8 @@ def _write_paper_sections(
         anti_repetition_rules = pm.block("anti_repetition_rules")
     except (KeyError, Exception):  # noqa: BLE001
         anti_repetition_rules = ""
+    shared_submission_rules = _shared_submission_rules(submission_profile)
+    call1_plan, call3_plan = _section_plan_for_profile(submission_profile)
 
     # --- Call 1: Title + Abstract + Introduction + Related Work ---
     call1_user = (
@@ -405,18 +491,10 @@ def _write_paper_sections(
         f"{narrative_writing_rules}\n"
         f"{anti_hedging_rules}\n"
         f"{anti_repetition_rules}\n\n"
+        f"{shared_submission_rules}"
         "Write the following sections of a NeurIPS/ICML-quality paper in markdown. "
         "Follow the LENGTH REQUIREMENTS strictly:\n\n"
-        "1. **Title** (HARD RULE: MUST be 14 words or fewer. Create a catchy method name "
-        "first, then build the title: 'MethodName: Subtitle'. If your title exceeds 14 words, "
-        "it will be automatically rejected. NEVER use 'Untitled Paper'.)\n"
-        f"2. **Abstract** (150-220 words — HARD LIMIT. Do NOT exceed 220 words. "
-        f"Do NOT include raw metric paths or 16-digit decimals.){abstract_structure}\n"
-        "3. **Introduction** (800-1000 words): real-world motivation, problem statement, "
-        "research gap analysis with citations, method overview, 3-4 contributions as bullet points, "
-        "paper organization paragraph. MUST cite 8-12 references.\n"
-        "4. **Related Work** (600-800 words): organized into 3-4 thematic subsections, each discussing "
-        "4-5 papers with proper citations. Compare approaches, identify limitations, position this work.\n\n"
+        f"{call1_plan.rstrip()}{abstract_structure}\n\n"
         f"Outline:\n{outline}\n\n"
         "Output markdown with ## headers. Do NOT include a References section.\n"
         "IMPORTANT: Start DIRECTLY with '## Title'. Do NOT include any preamble, "
@@ -451,6 +529,7 @@ def _write_paper_sections(
         f"{exp_metrics_instruction}\n\n"
         f"{narrative_writing_rules}\n"
         f"{anti_hedging_rules}\n\n"
+        f"{shared_submission_rules}"
         # IMP-21: Citation instruction for Method + Experiments
         "CITATION REQUIREMENT: The Method section MUST cite at least 3-5 related "
         "technical papers (foundations your method builds on). The Experiments section "
@@ -492,6 +571,7 @@ def _write_paper_sections(
         f"{narrative_writing_rules}\n"
         f"{anti_hedging_rules}\n"
         f"{anti_repetition_rules}\n\n"
+        f"{shared_submission_rules}"
         # IMP-21: Citation instruction for Results + Discussion + Conclusion
         "CITATION REQUIREMENT: The Discussion section MUST cite at least 3-5 papers "
         "when comparing findings with prior work. The Conclusion may cite 1-2 "
@@ -500,26 +580,7 @@ def _write_paper_sections(
         "You are completing a paper. The sections written so far are:\n\n"
         f"---\n{part1}\n\n{part2}\n---\n\n"
         "Now write the final sections, maintaining consistency:\n\n"
-        "7. **Results** (600-800 words):\n"
-        "   - START with an AGGREGATED results table (Table 1): rows = methods, columns = metrics.\n"
-        "     Each cell = mean \u00b1 std across seeds. Bold the best value per column.\n"
-        "     EVERY table MUST have a descriptive caption that allows understanding without "
-        "     reading the main text. NEVER use just 'Table 1' as a caption.\n"
-        "   - Follow with a PER-REGIME table (Table 2) breaking down by easy/hard regimes.\n"
-        "   - Include a STATISTICAL COMPARISON table (Table 3): paired t-tests between key methods.\n"
-        "   - NEVER dump raw per-seed numbers in the main text. Aggregate first, then discuss.\n"
-        "   - MUST include at least 2 figures using markdown image syntax: ![Caption](charts/filename.png)\n"
-        "     One figure MUST be a performance comparison chart. Figures MUST be referenced "
-        "     in text: 'As shown in Figure 1, ...'\n"
-        "8. **Discussion** (400-600 words): interpretation of key findings, unexpected results, "
-        "comparison with prior work (CITE 3-5 papers here!), practical implications.\n"
-        "9. **Limitations** (200-300 words): honest assessment of scope, dataset, methodology. "
-        "ALL caveats consolidated HERE — nowhere else in the paper.\n"
-        "10. **Conclusion** (100-200 words MAXIMUM — this is a HARD LIMIT): "
-        "Summarize contributions in 2-3 sentences. State main finding in 1 sentence. "
-        "Suggest 2-3 concrete future directions in 1-2 sentences. "
-        "Do NOT repeat any specific numbers from Results. Do NOT restate the abstract. "
-        "A good conclusion is SHORT and forward-looking.\n\n"
+        f"{call3_plan}\n"
         "CRITICAL FORMATTING RULES FOR ALL SECTIONS:\n"
         "- Write as FLOWING PROSE paragraphs, NOT bullet-point lists\n"
         "- NEVER dump raw metric paths like 'config/method_name/seed_3/primary_metric'\n"
@@ -2026,6 +2087,7 @@ def _execute_paper_draft(
             exact_title_instruction=exact_title_instruction,
             outline=outline,
             model_name=config.llm.primary_model,
+            submission_profile=config.export.submission_profile,
         )
 
         # R7: Strip LLM-generated References section — it often fabricates arXiv IDs.

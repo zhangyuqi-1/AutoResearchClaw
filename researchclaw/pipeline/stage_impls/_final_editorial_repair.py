@@ -33,11 +33,17 @@ _ITALIC_FIGURE_CAPTION_RE = re.compile(
     r"^\*\s*Figure\s+\d+[.:]?\s*(.*)\*\s*$",
     re.IGNORECASE,
 )
+_PLAIN_FIGURE_CAPTION_RE = re.compile(
+    r"^Figure\s+\d+[.:]\s+.+$",
+    re.IGNORECASE,
+)
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 _TABLE_CAPTION_RE = re.compile(
     r"^(?:\*\*|\*)?\s*Table\s+\d+[.:]\s+.*(?:\*\*|\*)?\s*$",
     re.IGNORECASE,
 )
+_FIGURE_REFERENCE_CAPTURE_RE = re.compile(r"\bFigure\s+(\d+)\b", re.IGNORECASE)
+_TABLE_REFERENCE_CAPTURE_RE = re.compile(r"\bTable\s+(\d+)\b", re.IGNORECASE)
 _GENERIC_ITALIC_BLOCK_RE = re.compile(r"^\*(?!\*)(.+?)\*\s*$", re.DOTALL)
 _DOCX_CITATION_BLOCK_RE = re.compile(r"\[([A-Za-z][A-Za-z0-9:_\-]*(?:\s*,\s*[A-Za-z][A-Za-z0-9:_\-]*)+)\]")
 _DOCX_LATEX_FIGURE_ENV_RE = re.compile(
@@ -54,6 +60,93 @@ _DOCX_INCLUDEGRAPHICS_RE = re.compile(
 )
 _DOCX_CAPTION_RE = re.compile(r"\\caption\{([^}]*)\}", re.DOTALL)
 _DOCX_LABEL_RE = re.compile(r"\\label\{[^}]+\}")
+_KEYWORDS_BLOCK_RE = re.compile(r"^\*\*Keywords:\*\*\s*(.+?)\s*$", re.IGNORECASE)
+_DISPLAY_EQUATION_BLOCK_RE = re.compile(
+    r"^\s*(?:\$\$.*\$\$|\\\[.*\\\]|\\begin\{equation\}.*\\end\{equation\})\s*$",
+    re.DOTALL,
+)
+_DOCX_EQUATION_LAYOUT_CAPTION = "RCEquationLayout"
+_EQUATION_REFERENCE_RE = re.compile(r"(?i)\bequation\s*\(\d+\)")
+_EQUATION_EXPLANATION_PREFIX_RE = re.compile(r"(?i)^in\s+equation\s+\(\d+\),\s*")
+_RAW_EQUATION_TOKEN_RE = re.compile(
+    r"\\mathcal\{L\}(?:_\{[^}]+\}|_[A-Za-z0-9]+)?|\\sigma|\\mathrm\{[A-Za-z]+\}|[A-Za-z]+(?:_[A-Za-z0-9]+)?"
+)
+_DOCX_EQUATION_OPERATOR_ONLY_RE = re.compile(
+    r"^(=|[+\-]|\\pm|\\mp|\\times|\\cdot|\\leq?|\\geq?|\\approx|\\sim|\\to|\\propto)\s*$"
+)
+_DOCX_EQUATION_CONTINUATION_RE = re.compile(
+    r"^(=|[+\-]|\\pm|\\mp|\\times|\\cdot|\\leq?|\\geq?|\\approx|\\sim|\\to|\\propto)(?:\s+|$)"
+)
+_DOCX_EQUATION_RELATION_RE = re.compile(
+    r"(=|\\leq?|\\geq?|\\approx|\\sim|\\to|\\propto)"
+)
+_GENERIC_EQUATION_SYMBOLS = {
+    "arg",
+    "bar",
+    "ge",
+    "in",
+    "mathcal",
+    "max",
+    "min",
+    "operatorname",
+    "quad",
+    "star",
+    "tilde",
+}
+_GENERIC_EQUATION_EXPLANATION_RE = re.compile(
+    r"\bdenotes a variable defined in the surrounding text\b",
+    re.IGNORECASE,
+)
+_BAD_EQUATION_EXPLANATION_PHRASES = (
+    "denotes the probe function",
+)
+
+_KEYWORD_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "approach",
+    "based",
+    "for",
+    "from",
+    "in",
+    "of",
+    "on",
+    "paper",
+    "study",
+    "system",
+    "systems",
+    "the",
+    "to",
+    "toward",
+    "using",
+    "via",
+    "with",
+}
+_EQUATION_TOKEN_STOPWORDS = {
+    "begin",
+    "end",
+    "equation",
+    "frac",
+    "left",
+    "log",
+    "right",
+    "sum",
+    "text",
+    "top",
+}
+_DOCX_COMPRESSION_PRIORITY = (
+    "Conclusion",
+    "Discussion",
+    "Limitations",
+    "Related Work",
+    "Introduction",
+    "Results and Analysis",
+    "Results",
+    "Experimental Setup",
+    "Experiments",
+    "Method",
+)
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -63,6 +156,7 @@ _DOCX_NS = {"w": _W_NS, "m": _M_NS}
 @dataclass
 class _Bundle:
     image_path: str
+    alt_text: str
     image_index: int
     start: int
     end: int
@@ -111,6 +205,7 @@ def _is_caption_block(block: str) -> bool:
     return bool(
         _BOLD_FIGURE_CAPTION_RE.match(stripped)
         or _ITALIC_FIGURE_CAPTION_RE.match(stripped)
+        or _PLAIN_FIGURE_CAPTION_RE.match(stripped)
     )
 
 
@@ -128,6 +223,1243 @@ def _split_markdown_sections(markdown: str) -> list[tuple[int, str, str]]:
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
         sections.append((len(match.group(1)), match.group(2).strip(), markdown[start:end].strip()))
     return sections
+
+
+def _render_markdown_sections(
+    title_block: tuple[int, str, str] | None,
+    sections: list[tuple[int, str, str]],
+) -> str:
+    parts: list[str] = []
+    if title_block is not None:
+        level, heading, body = title_block
+        parts.append("#" * level + f" {heading}")
+        if body.strip():
+            parts.extend(["", body.strip()])
+    for level, heading, body in sections:
+        if parts:
+            parts.append("")
+        parts.append("#" * level + f" {heading}")
+        if body.strip():
+            parts.extend(["", body.strip()])
+    return "\n".join(parts).strip() + "\n"
+
+
+def _strip_fenced_code_blocks(markdown: str) -> str:
+    return re.sub(
+        r"(?ms)^```[^\n]*\n.*?^```[ \t]*\n?",
+        "\n",
+        markdown,
+    )
+
+
+def _markdown_integrity_issues(
+    markdown: str,
+    *,
+    baseline: str | None = None,
+) -> list[str]:
+    issues: list[str] = []
+    fence_markers = len(re.findall(r"(?m)^```", markdown))
+    if fence_markers % 2 != 0:
+        issues.append("unbalanced_code_fences")
+    stripped = _strip_fenced_code_blocks(markdown)
+    sections = _split_markdown_sections(stripped)
+    if not sections:
+        issues.append("missing_heading_structure")
+        return issues
+
+    headings = [heading.strip().lower() for _, heading, _ in sections]
+    if baseline is not None:
+        baseline_sections = _split_markdown_sections(_strip_fenced_code_blocks(baseline))
+        baseline_headings = [heading.strip().lower() for _, heading, _ in baseline_sections]
+        if baseline_headings and headings and headings[0] != baseline_headings[0]:
+            issues.append("title_changed_or_missing")
+        canonical_required = {
+            heading
+            for heading in baseline_headings
+            if heading in {
+                "abstract",
+                "introduction",
+                "method",
+                "experiments",
+                "results",
+                "results and analysis",
+                "conclusion",
+            }
+        }
+        missing = canonical_required - set(headings)
+        if missing:
+            issues.append("missing_required_headings:" + ",".join(sorted(missing)))
+    return issues
+
+
+def _extract_image_alt_text(block: str) -> str:
+    match = re.search(r"!\[([^\]]*)\]\(([^)]+)\)", block)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
+def _keyword_overlap(text: str, reference: str) -> int:
+    stopwords = {
+        "about",
+        "across",
+        "adult",
+        "analysis",
+        "chart",
+        "comparison",
+        "covtype",
+        "dataset",
+        "datasets",
+        "figure",
+        "heatmap",
+        "main",
+        "method",
+        "methods",
+        "results",
+        "showing",
+        "shows",
+        "the",
+        "this",
+        "what",
+    }
+    source_tokens = {
+        token
+        for token in re.findall(r"[a-zA-Z]{4,}", text.lower())
+        if token not in stopwords
+    }
+    reference_tokens = {
+        token
+        for token in re.findall(r"[a-zA-Z]{4,}", reference.lower())
+        if token not in stopwords
+    }
+    return len(source_tokens & reference_tokens)
+
+
+def _extract_topic_keywords(topic: str, domains: tuple[str, ...], *, limit: int = 5) -> list[str]:
+    seen: set[str] = set()
+    keywords: list[str] = []
+    for token in re.findall(r"[A-Za-z][A-Za-z\-]{2,}", topic):
+        lowered = token.lower()
+        if lowered in _KEYWORD_STOPWORDS or lowered in seen:
+            continue
+        seen.add(lowered)
+        keywords.append(lowered)
+        if len(keywords) >= limit:
+            return keywords
+    for domain in domains:
+        lowered = str(domain).strip().lower()
+        if (
+            not lowered
+            or lowered in _KEYWORD_STOPWORDS
+            or lowered in seen
+        ):
+            continue
+        seen.add(lowered)
+        keywords.append(lowered)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _append_block(body: str, block: str) -> str:
+    body = body.strip()
+    block = block.strip()
+    if not block:
+        return body
+    if not body:
+        return block
+    return body + "\n\n" + block
+
+
+def _keyword_block_score(keywords_text: str) -> tuple[int, int]:
+    terms = [term.strip() for term in keywords_text.split(",") if term.strip()]
+    return (len(terms), len(keywords_text.strip()))
+
+
+def _select_best_keywords(candidates: list[str]) -> str:
+    if not candidates:
+        return ""
+    return max(candidates, key=_keyword_block_score).strip()
+
+
+def _deduplicate_keyword_blocks_in_body(body: str) -> tuple[str, str]:
+    blocks = _split_blocks(body)
+    if not blocks:
+        return body.strip(), ""
+    kept: list[str] = []
+    candidates: list[str] = []
+    for block in blocks:
+        match = _KEYWORDS_BLOCK_RE.match(block.strip())
+        if match:
+            candidates.append(match.group(1).strip())
+            continue
+        kept.append(block.strip())
+    return _join_blocks(kept), _select_best_keywords(candidates)
+
+
+def _deduplicate_keywords_in_sections(
+    sections: list[tuple[int, str, str]],
+) -> list[tuple[int, str, str]]:
+    selected_keywords = ""
+    cleaned_sections: list[tuple[int, str, str]] = []
+    for level, heading, body in sections:
+        cleaned_body, keywords = _deduplicate_keyword_blocks_in_body(body)
+        if keywords and (
+            not selected_keywords
+            or _keyword_block_score(keywords) > _keyword_block_score(selected_keywords)
+        ):
+            selected_keywords = keywords
+        cleaned_sections.append((level, heading, cleaned_body))
+
+    if not selected_keywords:
+        return cleaned_sections
+
+    keyword_block = "**Keywords:** " + selected_keywords
+    for idx, (level, heading, body) in enumerate(cleaned_sections):
+        if heading.strip().lower() == "abstract":
+            cleaned_sections[idx] = (level, heading, _append_block(body, keyword_block))
+            return cleaned_sections
+    if cleaned_sections:
+        level, heading, body = cleaned_sections[0]
+        cleaned_sections[0] = (level, heading, _append_block(body, keyword_block))
+    return cleaned_sections
+
+
+def _sections_have_keywords(sections: list[tuple[int, str, str]]) -> bool:
+    return any(
+        _KEYWORDS_BLOCK_RE.match(block.strip())
+        for _, _, body in sections
+        for block in _split_blocks(body)
+    )
+
+
+def _merge_section_into_body(body: str, label: str, extra_body: str) -> str:
+    extra_body = extra_body.strip()
+    if not extra_body:
+        return body.strip()
+    return _append_block(body, f"**{label}:**\n{extra_body}")
+
+
+def _table_block_signature(block: str) -> str:
+    return "\n".join(
+        re.sub(r"\s+", " ", line.strip())
+        for line in block.splitlines()
+        if line.strip()
+    )
+
+
+def _extract_figure_number(text: str) -> int | None:
+    match = _FIGURE_REFERENCE_CAPTURE_RE.search(text)
+    return int(match.group(1)) if match else None
+
+
+def _extract_table_number(text: str) -> int | None:
+    match = _TABLE_REFERENCE_CAPTURE_RE.search(text)
+    return int(match.group(1)) if match else None
+
+
+def _clean_table_caption_text(block: str) -> str:
+    text = block.strip()
+    text = re.sub(r"^(?:\*\*|\*)?\s*Table\s+\d+[.:]\s*", "", text, flags=re.IGNORECASE)
+    return text.strip("* ").strip()
+
+
+def _strip_sentence_end(text: str) -> str:
+    return text.strip().rstrip(".,;: ")
+
+
+def _lower_sentence_lead(text: str) -> str:
+    cleaned = text.strip()
+    if len(cleaned) < 2:
+        return cleaned.lower()
+    if cleaned[0].isalpha() and cleaned[1].islower():
+        return cleaned[0].lower() + cleaned[1:]
+    return cleaned
+
+
+def _is_reference_candidate_block(block: str) -> bool:
+    stripped = block.strip()
+    return bool(
+        stripped
+        and not _HEADING_RE.match(stripped)
+        and not _IMAGE_RE.search(stripped)
+        and not _is_caption_block(stripped)
+        and not _TABLE_CAPTION_RE.match(stripped)
+        and not stripped.startswith("|")
+        and not stripped.startswith(">")
+    )
+
+
+def _find_nearby_numbered_reference_block(
+    blocks: list[str],
+    *,
+    start: int,
+    end: int,
+    pattern: re.Pattern[str],
+) -> str | None:
+    candidate_indices: list[int] = []
+    for offset in (1, 2):
+        before_idx = start - offset
+        if before_idx >= 0:
+            candidate_indices.append(before_idx)
+    for offset in (1, 2):
+        after_idx = end + offset
+        if after_idx < len(blocks):
+            candidate_indices.append(after_idx)
+    for idx in candidate_indices:
+        block = blocks[idx].strip()
+        if _is_reference_candidate_block(block) and pattern.search(block):
+            return block
+    return None
+
+
+def _build_figure_caption_map(sources: tuple[str, ...]) -> dict[str, str]:
+    caption_map: dict[str, str] = {}
+    for source in sources:
+        source_blocks = _split_blocks(source)
+        for bundle in _extract_bundles(source_blocks):
+            if bundle.caption_index is None:
+                continue
+            key = Path(bundle.image_path).name
+            caption = source_blocks[bundle.caption_index].strip()
+            if key and caption and key not in caption_map:
+                caption_map[key] = caption
+    return caption_map
+
+
+def _build_figure_reference_map(sources: tuple[str, ...]) -> dict[str, str]:
+    reference_map: dict[str, str] = {}
+    for source in sources:
+        source_blocks = _split_blocks(source)
+        for bundle in _extract_bundles(source_blocks):
+            if bundle.figure_number is None:
+                continue
+            key = Path(bundle.image_path).name
+            if not key or key in reference_map:
+                continue
+            pattern = re.compile(rf"\bFigure\s+{bundle.figure_number}\b", re.IGNORECASE)
+            reference = None
+            for explanation_idx in bundle.explanation_indices:
+                if 0 <= explanation_idx < len(source_blocks):
+                    candidate = source_blocks[explanation_idx].strip()
+                    if _is_reference_candidate_block(candidate) and pattern.search(candidate):
+                        reference = candidate
+                        break
+            reference = reference or _find_nearby_numbered_reference_block(
+                source_blocks,
+                start=bundle.start,
+                end=bundle.end,
+                pattern=pattern,
+            )
+            if reference:
+                reference_map[key] = reference.strip()
+    return reference_map
+
+
+def _build_table_caption_map(sources: tuple[str, ...]) -> dict[str, str]:
+    caption_map: dict[str, str] = {}
+    for source in sources:
+        source_blocks = _split_blocks(source)
+        for idx, block in enumerate(source_blocks):
+            stripped = block.strip()
+            if not stripped.startswith("|"):
+                continue
+            if idx == 0:
+                continue
+            caption = source_blocks[idx - 1].strip()
+            if not _TABLE_CAPTION_RE.match(caption):
+                continue
+            signature = _table_block_signature(stripped)
+            if signature and signature not in caption_map:
+                caption_map[signature] = caption
+    return caption_map
+
+
+def _build_table_reference_map(sources: tuple[str, ...]) -> dict[str, str]:
+    reference_map: dict[str, str] = {}
+    for source in sources:
+        source_blocks = _split_blocks(source)
+        for idx, block in enumerate(source_blocks):
+            stripped = block.strip()
+            if not stripped.startswith("|") or idx == 0:
+                continue
+            caption = source_blocks[idx - 1].strip()
+            if not _TABLE_CAPTION_RE.match(caption):
+                continue
+            table_number = _extract_table_number(caption)
+            signature = _table_block_signature(stripped)
+            if table_number is None or not signature or signature in reference_map:
+                continue
+            pattern = re.compile(rf"\bTable\s+{table_number}\b", re.IGNORECASE)
+            reference = _find_nearby_numbered_reference_block(
+                source_blocks,
+                start=idx - 1,
+                end=idx,
+                pattern=pattern,
+            )
+            if reference:
+                reference_map[signature] = reference.strip()
+    return reference_map
+
+
+def _restore_table_captions_in_body(body: str, caption_map: dict[str, str]) -> str:
+    blocks = _split_blocks(body)
+    if not blocks or not caption_map:
+        return body.strip()
+    restored: list[str] = []
+    for block in blocks:
+        stripped = block.strip()
+        if stripped.startswith("|"):
+            signature = _table_block_signature(stripped)
+            caption = caption_map.get(signature, "")
+            if caption and not (restored and _TABLE_CAPTION_RE.match(restored[-1].strip())):
+                restored.append(caption)
+        restored.append(stripped)
+    return _join_blocks(restored)
+
+
+def _restore_figure_captions_in_body(body: str, caption_map: dict[str, str]) -> str:
+    blocks = _split_blocks(body)
+    if not blocks or not caption_map:
+        return body.strip()
+    restored: list[str] = []
+    for idx, block in enumerate(blocks):
+        stripped = block.strip()
+        restored.append(stripped)
+        image_match = _IMAGE_RE.search(stripped)
+        if not image_match:
+            continue
+        has_prev_caption = len(restored) >= 2 and _is_caption_block(restored[-2].strip())
+        has_next_caption = idx + 1 < len(blocks) and _is_caption_block(blocks[idx + 1].strip())
+        if has_prev_caption or has_next_caption:
+            continue
+        caption = caption_map.get(Path(image_match.group(1)).name, "").strip()
+        if caption:
+            restored.append(caption)
+    return _join_blocks(restored)
+
+
+def _figure_reference_fallback(figure_number: int, caption_block: str, alt_text: str) -> str:
+    caption_text = _clean_caption_text(caption_block)
+    if not caption_text:
+        caption_text = alt_text.strip()
+    caption_text = _strip_sentence_end(caption_text)
+    if not caption_text:
+        return f"Figure {figure_number} summarizes the local visual evidence."
+    return f"Figure {figure_number} summarizes {_lower_sentence_lead(caption_text)}."
+
+
+def _table_reference_fallback(table_number: int, caption_block: str) -> str:
+    caption_text = _strip_sentence_end(_clean_table_caption_text(caption_block))
+    if not caption_text:
+        return f"Table {table_number} reports the local benchmark values."
+    return f"Table {table_number} reports {_lower_sentence_lead(caption_text)}."
+
+
+def _restore_figure_references_in_body(
+    body: str,
+    reference_map: dict[str, str],
+) -> str:
+    blocks = _split_blocks(body)
+    if not blocks:
+        return body.strip()
+    for bundle in reversed(_extract_bundles(blocks)):
+        if bundle.figure_number is None:
+            continue
+        if _find_first_explicit_figure_reference_index(blocks, bundle.figure_number) is not None:
+            continue
+        image_name = Path(bundle.image_path).name
+        caption_block = (
+            blocks[bundle.caption_index]
+            if bundle.caption_index is not None and 0 <= bundle.caption_index < len(blocks)
+            else ""
+        )
+        reference = reference_map.get(image_name, "").strip()
+        if not reference:
+            reference = _figure_reference_fallback(
+                bundle.figure_number,
+                caption_block,
+                bundle.alt_text,
+            )
+        replaced = False
+        for explanation_idx in bundle.explanation_indices:
+            if 0 <= explanation_idx < len(blocks) and not _FIGURE_REFERENCE_CAPTURE_RE.search(
+                blocks[explanation_idx]
+            ):
+                blocks[explanation_idx] = reference
+                replaced = True
+                break
+        if not replaced:
+            blocks = blocks[: bundle.start] + [reference] + blocks[bundle.start :]
+    return _join_blocks(blocks)
+
+
+def _restore_table_references_in_body(
+    body: str,
+    reference_map: dict[str, str],
+) -> str:
+    blocks = _split_blocks(body)
+    if not blocks:
+        return body.strip()
+    idx = len(blocks) - 1
+    while idx >= 0:
+        block = blocks[idx].strip()
+        if not block.startswith("|") or idx == 0:
+            idx -= 1
+            continue
+        caption = blocks[idx - 1].strip()
+        if not _TABLE_CAPTION_RE.match(caption):
+            idx -= 1
+            continue
+        table_number = _extract_table_number(caption)
+        if table_number is None:
+            idx -= 1
+            continue
+        if _find_first_explicit_table_reference_index(blocks, table_number) is not None:
+            idx -= 1
+            continue
+        signature = _table_block_signature(block)
+        reference = reference_map.get(signature, "").strip()
+        if not reference:
+            reference = _table_reference_fallback(table_number, caption)
+        insert_at = idx - 1
+        generic_idx = insert_at - 1
+        if generic_idx >= 0 and _is_reference_candidate_block(blocks[generic_idx]):
+            lowered = blocks[generic_idx].lower()
+            if "below" in lowered or "summarized" in lowered or "summarised" in lowered:
+                blocks[generic_idx] = reference
+                idx -= 1
+                continue
+        blocks = blocks[:insert_at] + [reference] + blocks[insert_at:]
+        idx -= 1
+    return _join_blocks(blocks)
+
+
+def _is_equation_explanation_block(block: str) -> bool:
+    lowered = block.strip().lower()
+    return (
+        lowered.startswith("where ")
+        or lowered.startswith("here,")
+        or lowered.startswith("in this expression,")
+        or lowered.startswith("in this equation,")
+        or bool(_EQUATION_EXPLANATION_PREFIX_RE.match(block.strip()))
+    )
+
+
+def _looks_like_display_equation(block: str) -> bool:
+    stripped = block.strip()
+    if not stripped:
+        return False
+    if _DISPLAY_EQUATION_BLOCK_RE.match(stripped):
+        return True
+    if any(
+        pattern.match(stripped)
+        for pattern in (
+            _HEADING_RE,
+            _TABLE_CAPTION_RE,
+            _BOLD_FIGURE_CAPTION_RE,
+            _ITALIC_FIGURE_CAPTION_RE,
+        )
+    ):
+        return False
+    if _GENERIC_IMAGE_RE.search(stripped) or "|" in stripped:
+        return False
+    if "=" not in stripped:
+        return False
+    if len(stripped.split()) > 18:
+        return False
+    return bool(re.search(r"[\\^_{}]|[α-ωΑ-ΩσΣℒ]", stripped))
+
+
+def _normalize_equation_lead_in(block: str) -> str:
+    stripped = block.strip()
+    stripped = re.sub(
+        r"\s+(?:as\s+shown\s+|as\s+defined\s+)?in\s+Equation\s+\(\d+\)(?=[:.]|\s*$)",
+        "",
+        stripped,
+        flags=re.IGNORECASE,
+    ).strip()
+    stripped = re.sub(
+        r"(?i)\bEquation\s+\(\d+\)\s+(?:defines|shows|gives)\s+",
+        "",
+        stripped,
+        count=1,
+    ).strip()
+    if stripped.endswith((",", ";")):
+        return stripped[:-1] + ":"
+    if stripped.endswith(":"):
+        return stripped
+    if stripped.endswith("."):
+        return stripped
+    return stripped + ":"
+
+
+def _unwrap_display_equation(block: str) -> str:
+    stripped = block.strip()
+    if stripped.startswith("$$") and stripped.endswith("$$"):
+        inner = stripped[2:-2].strip()
+    elif stripped.startswith("\\[") and stripped.endswith("\\]"):
+        inner = stripped[2:-2].strip()
+    else:
+        inner = stripped
+    inner = re.sub(r"[ \t]*[.,;:]+$", "", inner)
+    return inner.strip()
+
+
+def _normalize_display_equation(block: str) -> str:
+    inner = _unwrap_display_equation(block)
+    return "$$\n" + inner + "\n$$"
+
+
+def _find_top_level_relation(line: str) -> tuple[int, str] | None:
+    commands = ("\\leq", "\\geq", "\\approx", "\\sim", "\\to", "\\propto")
+    depth = 0
+    idx = 0
+    while idx < len(line):
+        for command in commands:
+            if depth == 0 and line.startswith(command, idx):
+                return idx, command
+        char = line[idx]
+        if char == "\\":
+            idx += 1
+            while idx < len(line) and line[idx].isalpha():
+                idx += 1
+            continue
+        if char == "{":
+            depth += 1
+            idx += 1
+            continue
+        if char == "}":
+            depth = max(0, depth - 1)
+            idx += 1
+            continue
+        if depth == 0 and char == "=":
+            return idx, char
+        idx += 1
+    return None
+
+
+def _split_docx_equation_relation(line: str) -> tuple[str, str, str] | None:
+    stripped = line.strip()
+    match = _find_top_level_relation(stripped)
+    if match is None:
+        return None
+    start, relation = match
+    left = stripped[:start].rstrip()
+    right = stripped[start + len(relation) :].lstrip()
+    if not left or not right:
+        return None
+    return left, relation, right
+
+
+def _split_docx_equation_leading_relation(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    for relation in ("\\leq", "\\geq", "\\approx", "\\sim", "\\to", "\\propto", "="):
+        if stripped.startswith(relation):
+            right = stripped[len(relation) :].lstrip()
+            if right:
+                return relation, right
+    return None
+
+
+def _collapse_docx_equation_lines(lines: list[str]) -> str:
+    return re.sub(r"\s+", " ", " ".join(line.strip() for line in lines if line.strip())).strip()
+
+
+def _equation_symbol_key(symbol: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", symbol.lower().strip("$").lstrip("\\"))
+
+
+def _docx_equation_should_align(lines: list[str]) -> bool:
+    if len(lines) <= 1:
+        return False
+    continuation_lines = 0
+    relation_lines = 0
+    for line in lines[1:]:
+        if _split_docx_equation_leading_relation(line) is not None:
+            continuation_lines += 1
+            continue
+        if _DOCX_EQUATION_CONTINUATION_RE.match(line.strip()):
+            continuation_lines += 1
+    for line in lines:
+        if _split_docx_equation_relation(line) is not None:
+            relation_lines += 1
+    collapsed = _collapse_docx_equation_lines(lines)
+    return continuation_lines >= 2 or (relation_lines > 1 and len(collapsed) > 120)
+
+
+def _normalize_docx_display_equation(block: str) -> str:
+    inner = _unwrap_display_equation(block)
+    if (
+        not inner
+        or "\\begin{aligned}" in inner
+        or "\\begin{array}" in inner
+        or "\\begin{split}" in inner
+        or "\\\\" in inner
+    ):
+        return _normalize_display_equation(block)
+
+    lines = [line.strip() for line in inner.splitlines() if line.strip()]
+    if len(lines) <= 1:
+        return _normalize_display_equation(block)
+
+    merged: list[str] = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if idx + 1 < len(lines) and _DOCX_EQUATION_OPERATOR_ONLY_RE.fullmatch(line):
+            merged.append(f"{line} {lines[idx + 1].lstrip()}".strip())
+            idx += 2
+            continue
+        merged.append(line)
+        idx += 1
+
+    if len(merged) <= 1:
+        return _normalize_display_equation(block)
+
+    if not _docx_equation_should_align(merged):
+        return "$$\n" + _collapse_docx_equation_lines(merged) + "\n$$"
+
+    rows: list[str] = []
+    start_idx = 1
+    first_relation = _split_docx_equation_relation(merged[0])
+    if first_relation is not None:
+        left, relation, right = first_relation
+        rows.append(f"{left} &{relation} {right}")
+    elif len(merged) > 1 and _split_docx_equation_leading_relation(merged[1]) is not None:
+        relation, right = _split_docx_equation_leading_relation(merged[1]) or ("", "")
+        rows.append(f"{merged[0]} &{relation} {right}".rstrip())
+        start_idx = 2
+    elif len(merged) > 1 and _DOCX_EQUATION_CONTINUATION_RE.match(merged[1]):
+        rows.append(f"{merged[0]} &{merged[1]}")
+        start_idx = 2
+    else:
+        rows.append(merged[0])
+
+    for line in merged[start_idx:]:
+        if not line:
+            continue
+        leading_relation = _split_docx_equation_leading_relation(line)
+        if leading_relation is not None:
+            relation, right = leading_relation
+            rows.append(f"&{relation} {right}")
+            continue
+        relation = _split_docx_equation_relation(line)
+        if relation is not None:
+            left, rel, right = relation
+            rows.append(f"{left} &{rel} {right}")
+            continue
+        if _DOCX_EQUATION_CONTINUATION_RE.match(line):
+            rows.append(f"&\\quad {line}")
+            continue
+        rows.append(f"&\\quad {line}")
+
+    aligned = " \\\\\n".join(rows)
+    return "$$\n\\begin{aligned}\n" + aligned + "\n\\end{aligned}\n$$"
+
+
+def _extract_equation_symbols(equation_body: str) -> list[str]:
+    normalized = equation_body.replace("\\mathrm{LN}", "LN")
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for token in _RAW_EQUATION_TOKEN_RE.findall(normalized):
+        cleaned = token.strip()
+        if not cleaned:
+            continue
+        lower = cleaned.lower().lstrip("\\")
+        if (
+            lower in _EQUATION_TOKEN_STOPWORDS
+            or lower.startswith("sum")
+            or lower.startswith("log")
+        ):
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        symbols.append(cleaned)
+    return symbols
+
+
+def _format_equation_symbol(symbol: str) -> str:
+    if symbol == "LN":
+        return r"$\mathrm{LN}$"
+    return f"${symbol}$"
+
+
+def _describe_equation_symbol(symbol: str, lead_context: str) -> str:
+    lowered_context = lead_context.lower()
+    plain = symbol.lower().lstrip("\\")
+    if plain in _GENERIC_EQUATION_SYMBOLS:
+        return ""
+    if symbol == "\\sigma":
+        return "denotes the sigmoid activation"
+    if symbol == "LN":
+        return "denotes layer normalization"
+    if plain.startswith("mathcal{l}") or plain.startswith("l_"):
+        if "loss" in lowered_context or "cross-entropy" in lowered_context:
+            return "denotes the training loss"
+        return "denotes the objective defined in this section"
+    if plain.startswith("y"):
+        if "probability" in lowered_context or "classifier" in lowered_context:
+            return "denotes the predicted probability"
+        return "denotes the model output"
+    if plain.startswith("p"):
+        if "probe" in lowered_context:
+            return "denotes the probe prediction"
+        return "denotes the predicted probability"
+    if plain.startswith("q"):
+        return "denotes the probe function"
+    if plain.startswith(("w", "w_")) or symbol.startswith(("W", "w")):
+        return "denotes a learnable weight parameter"
+    if plain.startswith("b"):
+        return "denotes a learnable bias parameter"
+    if plain.startswith(("z", "x", "h")):
+        return "denotes the representation for sample $i$"
+    if plain.startswith("t") and "threshold" in lowered_context:
+        return "denotes the validation threshold"
+    return ""
+
+
+def _join_explanation_fragments(fragments: list[str]) -> str:
+    if not fragments:
+        return ""
+    if len(fragments) == 1:
+        return fragments[0]
+    if len(fragments) == 2:
+        return fragments[0] + ", and " + fragments[1]
+    return ", ".join(fragments[:-1]) + ", and " + fragments[-1]
+
+
+def _build_equation_explanation(equation_block: str, lead_context: str) -> str:
+    symbols = _extract_equation_symbols(_unwrap_display_equation(equation_block))
+    if not symbols:
+        return ""
+    fragments = []
+    for symbol in symbols[:7]:
+        description = _describe_equation_symbol(symbol, lead_context)
+        if not description:
+            continue
+        fragments.append(f"{_format_equation_symbol(symbol)} {description}")
+    if not fragments:
+        return ""
+    return "Here, " + _join_explanation_fragments(fragments) + "."
+
+
+def _ensure_equation_reference(block: str, equation_number: int) -> str:
+    reference = f"Equation ({equation_number})"
+    stripped = block.strip()
+    if not stripped:
+        return stripped
+    if _EQUATION_REFERENCE_RE.search(stripped):
+        return _EQUATION_REFERENCE_RE.sub(reference, stripped)
+    if stripped.endswith(":"):
+        return stripped[:-1].rstrip() + f" in {reference}:"
+    if stripped.endswith("."):
+        return stripped[:-1].rstrip() + f" in {reference}."
+    return stripped + f" in {reference}:"
+
+
+def _normalize_equation_explanation_block(block: str, equation_number: int) -> str:
+    _ = equation_number
+    stripped = block.strip()
+    replacements = (
+        (r"(?i)^in\s+equation\s+\(\d+\),\s*", ""),
+        (r"(?i)^here,\s*", ""),
+        (r"(?i)^in\s+this\s+equation,\s*", ""),
+        (r"(?i)^in\s+this\s+expression,\s*", ""),
+        (r"(?i)^where\s+", ""),
+    )
+    body = stripped
+    for pattern, replacement in replacements:
+        body = re.sub(pattern, replacement, body, count=1)
+    body = body.strip()
+    fragments = [frag.strip() for frag in re.split(r",\s*(?=\$)", body) if frag.strip()]
+    kept_fragments: list[str] = []
+    for fragment in fragments or ([body] if body else []):
+        cleaned_fragment = re.sub(r"^(?:and\s+)", "", fragment).strip()
+        if not cleaned_fragment:
+            continue
+        if _GENERIC_EQUATION_EXPLANATION_RE.search(cleaned_fragment):
+            continue
+        matched_bad_phrase = next(
+            (
+                phrase
+                for phrase in _BAD_EQUATION_EXPLANATION_PHRASES
+                if phrase in cleaned_fragment.lower()
+            ),
+            "",
+        )
+        if matched_bad_phrase:
+            symbol_match_for_phrase = re.match(r"^\$([^$]+)\$", cleaned_fragment)
+            symbol_key_for_phrase = (
+                _equation_symbol_key(symbol_match_for_phrase.group(1))
+                if symbol_match_for_phrase
+                else ""
+            )
+            if symbol_key_for_phrase in _GENERIC_EQUATION_SYMBOLS or matched_bad_phrase == "denotes the probe function":
+                continue
+        symbol_match = re.match(r"^\$([^$]+)\$", cleaned_fragment)
+        if symbol_match and _equation_symbol_key(symbol_match.group(1)) in _GENERIC_EQUATION_SYMBOLS:
+            continue
+        kept_fragments.append(cleaned_fragment)
+    body = _join_explanation_fragments(kept_fragments).strip()
+    body = re.sub(r"\s+,", ",", body)
+    body = re.sub(r",\s*,", ", ", body)
+    body = re.sub(r"\s+", " ", body).strip(" ,")
+    if _GENERIC_EQUATION_EXPLANATION_RE.search(body) or not re.search(r"[A-Za-z0-9$\\]", body):
+        body = ""
+    if not body:
+        return ""
+    return f"Here, {body}"
+
+
+def _normalize_section_equations_numbered(
+    body: str,
+    *,
+    start_number: int = 1,
+) -> tuple[str, int]:
+    blocks = _split_blocks(body)
+    if not blocks:
+        return body.strip(), start_number
+
+    normalized: list[str] = []
+    equation_number = start_number
+    idx = 0
+    while idx < len(blocks):
+        block = blocks[idx]
+        stripped = block.strip()
+        if not _looks_like_display_equation(stripped):
+            normalized.append(stripped)
+            idx += 1
+            continue
+
+        lead_context = ""
+        if normalized and not _looks_like_display_equation(normalized[-1]):
+            normalized[-1] = _normalize_equation_lead_in(normalized[-1])
+            lead_context = normalized[-1]
+
+        normalized_equation = _normalize_display_equation(stripped)
+        normalized.append(normalized_equation)
+        next_block = blocks[idx + 1].strip() if idx + 1 < len(blocks) else ""
+        if _is_equation_explanation_block(next_block):
+            explanation = _normalize_equation_explanation_block(next_block, equation_number)
+            if explanation:
+                normalized.append(explanation)
+            idx += 2
+        else:
+            explanation = _build_equation_explanation(normalized_equation, lead_context)
+            if explanation:
+                normalized_explanation = _normalize_equation_explanation_block(
+                    explanation,
+                    equation_number,
+                )
+                if normalized_explanation:
+                    normalized.append(normalized_explanation)
+            idx += 1
+        equation_number += 1
+
+    return _join_blocks(normalized), equation_number
+
+
+def _normalize_section_equations(body: str) -> str:
+    normalized, _ = _normalize_section_equations_numbered(body, start_number=1)
+    return normalized
+
+
+def _count_words(text: str) -> int:
+    return len(re.findall(r"\b[\w\-]+\b", text))
+
+
+def _split_sentences(text: str) -> list[str]:
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part.strip()]
+    return sentences or ([text.strip()] if text.strip() else [])
+
+
+def _truncate_prose_block(block: str, word_budget: int) -> str:
+    if word_budget <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    for sentence in _split_sentences(block):
+        sentence_words = _count_words(sentence)
+        if kept and used + sentence_words > word_budget:
+            break
+        kept.append(sentence)
+        used += sentence_words
+        if used >= word_budget:
+            break
+    return " ".join(kept).strip()
+
+
+def _section_word_budget(
+    heading: str,
+    overflow_pages: int,
+    submission_profile: str,
+    compression_round: int,
+) -> int:
+    heading_lower = heading.strip().lower()
+    base_budgets = {
+        "conclusion": 160,
+        "discussion": 260,
+        "limitations": 180,
+        "related work": 420 if submission_profile != "ei_conference" else 220,
+        "introduction": 520,
+        "results": 620,
+        "results and analysis": 760,
+        "experimental setup": 520,
+        "experiments": 560,
+        "method": 780,
+    }
+    reductions = {
+        "conclusion": 40,
+        "discussion": 60,
+        "limitations": 50,
+        "related work": 90,
+        "introduction": 50,
+        "results": 50,
+        "results and analysis": 60,
+        "experimental setup": 40,
+        "experiments": 40,
+        "method": 35,
+    }
+    base = base_budgets.get(heading_lower, 500)
+    reduction = reductions.get(heading_lower, 30) * max(overflow_pages, 1) * max(compression_round, 1)
+    return max(80, base - reduction)
+
+
+def _compress_section_body(
+    body: str,
+    *,
+    heading: str,
+    overflow_pages: int,
+    submission_profile: str,
+    compression_round: int,
+) -> str:
+    budget = _section_word_budget(
+        heading,
+        overflow_pages,
+        submission_profile,
+        compression_round,
+    )
+    blocks = _split_blocks(body)
+    if not blocks:
+        return body.strip()
+
+    compressed: list[str] = []
+    used_words = 0
+    for block in blocks:
+        stripped = block.strip()
+        if (
+            _looks_like_display_equation(stripped)
+            or _is_equation_explanation_block(stripped)
+            or _GENERIC_IMAGE_RE.search(stripped)
+            or _TABLE_CAPTION_RE.match(stripped)
+            or _is_caption_block(stripped)
+            or stripped.startswith("|")
+        ):
+            compressed.append(stripped)
+            continue
+        remaining = budget - used_words
+        if remaining <= 0:
+            continue
+        truncated = _truncate_prose_block(stripped, remaining)
+        if not truncated:
+            continue
+        compressed.append(truncated)
+        used_words += _count_words(truncated)
+    return _join_blocks(compressed) if compressed else body.strip()
+
+
+def _compress_markdown_for_docx_limit(
+    markdown: str,
+    *,
+    current_page_count: int,
+    page_limit: int,
+    submission_profile: str,
+    compression_round: int = 1,
+) -> str:
+    overflow_pages = current_page_count - page_limit
+    if overflow_pages <= 0:
+        return markdown
+
+    sections = _split_markdown_sections(markdown)
+    if not sections:
+        return markdown
+
+    title_block: tuple[int, str, str] | None = None
+    body_sections = sections
+    if sections[0][0] == 1:
+        title_block = sections[0]
+        body_sections = sections[1:]
+
+    priority_rank = {
+        heading.lower(): idx for idx, heading in enumerate(_DOCX_COMPRESSION_PRIORITY)
+    }
+    updated_sections = [(level, heading, body) for level, heading, body in body_sections]
+    for idx, (level, heading, body) in sorted(
+        enumerate(updated_sections),
+        key=lambda item: priority_rank.get(item[1][1].lower(), len(priority_rank)),
+    ):
+        compressed_body = _compress_section_body(
+            body,
+            heading=heading,
+            overflow_pages=overflow_pages,
+            submission_profile=submission_profile,
+            compression_round=compression_round,
+        )
+        updated_sections[idx] = (level, heading, compressed_body)
+
+    return _render_markdown_sections(title_block, updated_sections)
+
+
+def _extend_unique(target: list[str], items: list[str]) -> None:
+    for item in items:
+        if item not in target:
+            target.append(item)
+
+
+def _load_docx_quality_payload(docx_quality_path: Path) -> dict[str, object]:
+    if docx_quality_path.exists():
+        return cast(
+            dict[str, object],
+            json.loads(docx_quality_path.read_text(encoding="utf-8")),
+        )
+    return {
+        "clean": False,
+        "heading_numbering_ok": False,
+        "equation_alignment_ok": False,
+        "display_math_omml_ok": False,
+        "figure_caption_numbering_ok": False,
+        "table_caption_numbering_ok": False,
+        "issues": ["docx_not_exported"],
+    }
+
+
+def _normalize_final_paper_markdown(
+    markdown: str,
+    *,
+    topic: str,
+    domains: tuple[str, ...],
+    submission_profile: str,
+    table_caption_sources: tuple[str, ...] = (),
+    figure_reference_sources: tuple[str, ...] = (),
+) -> str:
+    sections = _split_markdown_sections(markdown)
+    if not sections:
+        return markdown.strip() + ("\n" if markdown.strip() else "")
+
+    title_block: tuple[int, str, str] | None = None
+    body_sections = sections
+    if sections[0][0] == 1:
+        title_block = sections[0]
+        body_sections = sections[1:]
+
+    normalized_sections: list[tuple[int, str, str]] = []
+    equation_number = 1
+    for level, heading, body in body_sections:
+        normalized_body, equation_number = _normalize_section_equations_numbered(
+            body.strip(),
+            start_number=equation_number,
+        )
+        normalized_sections.append((level, heading, normalized_body))
+    caption_map = _build_table_caption_map(table_caption_sources)
+    if caption_map:
+        normalized_sections = [
+            (level, heading, _restore_table_captions_in_body(body, caption_map))
+            for level, heading, body in normalized_sections
+        ]
+    figure_sources = figure_reference_sources or table_caption_sources
+    figure_caption_map = _build_figure_caption_map(figure_sources)
+    if figure_caption_map:
+        normalized_sections = [
+            (level, heading, _restore_figure_captions_in_body(body, figure_caption_map))
+            for level, heading, body in normalized_sections
+        ]
+    figure_reference_map = _build_figure_reference_map(figure_sources)
+    if figure_reference_map or figure_caption_map:
+        normalized_sections = [
+            (level, heading, _restore_figure_references_in_body(body, figure_reference_map))
+            for level, heading, body in normalized_sections
+        ]
+    table_reference_map = _build_table_reference_map(table_caption_sources)
+    if table_reference_map or caption_map:
+        normalized_sections = [
+            (level, heading, _restore_table_references_in_body(body, table_reference_map))
+            for level, heading, body in normalized_sections
+        ]
+    normalized_sections = _deduplicate_keywords_in_sections(normalized_sections)
+    if not _sections_have_keywords(normalized_sections):
+        keywords = _extract_topic_keywords(topic, domains)
+        if keywords:
+            keyword_block = "**Keywords:** " + ", ".join(keywords)
+            for idx, (level, heading, body) in enumerate(normalized_sections):
+                if heading.strip().lower() == "abstract":
+                    normalized_sections[idx] = (
+                        level,
+                        heading,
+                        _append_block(body, keyword_block),
+                    )
+                    break
+
+    if submission_profile != "ei_conference":
+        return _render_markdown_sections(title_block, normalized_sections)
+
+    intro_idx: int | None = None
+    conclusion_idx: int | None = None
+    related_body = ""
+    discussion_body = ""
+    limitations_body = ""
+    profiled_sections: list[tuple[int, str, str]] = []
+
+    for level, heading, body in normalized_sections:
+        lowered = heading.strip().lower()
+        if lowered == "introduction" and intro_idx is None:
+            intro_idx = len(profiled_sections)
+        if lowered == "conclusion" and conclusion_idx is None:
+            conclusion_idx = len(profiled_sections)
+        if lowered == "related work":
+            related_body = _append_block(related_body, body)
+            continue
+        if lowered == "results":
+            heading = "Results and Analysis"
+        elif lowered == "discussion":
+            discussion_body = _append_block(discussion_body, body)
+            continue
+        elif lowered == "limitations":
+            limitations_body = _append_block(limitations_body, body)
+            continue
+        profiled_sections.append((level, heading, body))
+
+    if related_body:
+        if intro_idx is not None:
+            level, heading, body = profiled_sections[intro_idx]
+            profiled_sections[intro_idx] = (
+                level,
+                heading,
+                _merge_section_into_body(body, "Related work synthesis", related_body),
+            )
+        elif profiled_sections:
+            level, heading, body = profiled_sections[0]
+            profiled_sections[0] = (
+                level,
+                heading,
+                _merge_section_into_body(body, "Related work synthesis", related_body),
+            )
+
+    merged_conclusion = _merge_section_into_body("", "Discussion", discussion_body)
+    merged_conclusion = _merge_section_into_body(merged_conclusion, "Limitations", limitations_body)
+    if merged_conclusion:
+        if conclusion_idx is not None:
+            level, heading, body = profiled_sections[conclusion_idx]
+            profiled_sections[conclusion_idx] = (
+                level,
+                heading,
+                _append_block(body, merged_conclusion),
+            )
+        else:
+            profiled_sections.append((2, "Conclusion", merged_conclusion))
+
+    return _render_markdown_sections(title_block, profiled_sections)
 
 
 def _yaml_escape(value: str) -> str:
@@ -156,6 +1488,89 @@ def _extract_docx_citation_clusters(text: str) -> list[list[str]]:
     return clusters
 
 
+def _collect_citation_keys(text: str) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for cluster in _extract_docx_citation_clusters(text):
+        for key in cluster:
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(key)
+    return ordered
+
+
+def _enforce_reference_limit(markdown: str, *, max_references: int) -> str:
+    if max_references <= 0:
+        return markdown
+
+    allowed_order: list[str] = []
+    allowed_set: set[str] = set()
+    pattern = re.compile(r"(?<!\!)\[([^\[\]]+)\]")
+
+    def _replace(match: re.Match[str]) -> str:
+        parts = [part.strip() for part in match.group(1).split(",") if part.strip()]
+        if not parts or not all(_looks_like_citation_key(part) for part in parts):
+            return match.group(0)
+        kept: list[str] = []
+        for part in parts:
+            if part in allowed_set:
+                kept.append(part)
+                continue
+            if len(allowed_order) >= max_references:
+                continue
+            allowed_order.append(part)
+            allowed_set.add(part)
+            kept.append(part)
+        if not kept:
+            return ""
+        return "[" + ", ".join(kept) + "]"
+
+    limited = pattern.sub(_replace, markdown)
+    limited = re.sub(r"[ \t]+\n", "\n", limited)
+    limited = re.sub(r"\n{3,}", "\n\n", limited)
+    limited = re.sub(r"\s+([,.;:])", r"\1", limited)
+    return limited
+
+
+def _preserves_required_structure(original_markdown: str, candidate_markdown: str) -> bool:
+    return not _markdown_integrity_issues(candidate_markdown, baseline=original_markdown)
+
+
+def _sync_bibliography_with_markdown(stage_dir: Path, markdown: str) -> bool:
+    bib_path = stage_dir / "references.bib"
+    if not bib_path.exists():
+        return False
+
+    try:
+        from researchclaw.pipeline.stage_impls._review_publish import (
+            _dedupe_bibtex_entries,
+            _extract_citation_keys_from_text,
+            _remove_bibtex_entries,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Stage 24: bibliography sync unavailable: %s", exc)
+        return False
+
+    try:
+        bib_text = bib_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Stage 24: failed reading bibliography: %s", exc)
+        return False
+
+    deduped = _dedupe_bibtex_entries(bib_text)
+    cited_keys = set(_collect_citation_keys(markdown)) | _extract_citation_keys_from_text(markdown)
+    if cited_keys:
+        bib_keys = set(re.findall(r"@\w+\{([^,]+),", deduped))
+        drop_keys = bib_keys - cited_keys
+        if drop_keys:
+            deduped = _remove_bibtex_entries(deduped, drop_keys)
+            deduped = _dedupe_bibtex_entries(deduped)
+    if deduped != bib_text:
+        bib_path.write_text(deduped, encoding="utf-8")
+    return True
+
+
 def _format_docx_numeric_citations(text: str) -> tuple[str, list[str]]:
     clusters = _extract_docx_citation_clusters(text)
     ordered_keys: list[str] = []
@@ -173,7 +1588,7 @@ def _format_docx_numeric_citations(text: str) -> tuple[str, list[str]]:
         if not parts or not all(part in key_numbers for part in parts):
             return match.group(0)
         nums = [str(key_numbers[part]) for part in parts]
-        return "<sup>[" + ", ".join(nums) + "]</sup>"
+        return "[" + ", ".join(nums) + "]"
 
     return pattern.sub(_replace, text), ordered_keys
 
@@ -374,6 +1789,9 @@ def _prepare_docx_markdown(
         title = sections[0][1]
         body_sections = sections[1:]
         shift = 1
+    body_sections = _deduplicate_keywords_in_sections(
+        [(level, heading, body.strip()) for level, heading, body in body_sections]
+    )
 
     abstract_body = ""
     normalized_sections: list[tuple[int, str, str]] = []
@@ -404,7 +1822,9 @@ def _prepare_docx_markdown(
         abstract_text, _ = _format_docx_numeric_citations(abstract_body)
         abstract_blocks = _split_blocks(abstract_text)
         for idx, block in enumerate(abstract_blocks):
-            style = "FirstParagraph" if idx == 0 else "BodyText"
+            style = "Keywords" if _KEYWORDS_BLOCK_RE.match(block.strip()) else ("FirstParagraph" if idx == 0 else "BodyText")
+            if style == "Keywords":
+                block = "Keywords: " + _KEYWORDS_BLOCK_RE.match(block.strip()).group(1)  # type: ignore[union-attr]
             parts.extend(
                 [
                     f'::: {{custom-style="{style}"}}',
@@ -453,6 +1873,8 @@ def _prepare_docx_markdown(
                 continue
             if _is_caption_block(block) or _TABLE_CAPTION_RE.match(block):
                 parts.append(_style_docx_caption_block(block))
+            elif _looks_like_display_equation(block):
+                parts.append(_normalize_docx_display_equation(block))
             else:
                 parts.append(_normalize_docx_list_block(block))
             parts.append("")
@@ -673,6 +2095,12 @@ def _normalize_docx_styles(styles_root: etree._Element) -> None:
     _ensure_docx_style_justification(bibliography, "left")
     _ensure_docx_style_run(bibliography, size=21, color="000000")
 
+    keywords = _ensure_docx_paragraph_style(styles_root, "Keywords")
+    _ensure_docx_style_spacing(keywords, before=0, after=60, line=240)
+    _ensure_docx_style_indent(keywords, left=0, first_line=0)
+    _ensure_docx_style_justification(keywords, "left")
+    _ensure_docx_style_run(keywords, bold=True, size=21, color="000000")
+
     compact = _ensure_docx_paragraph_style(styles_root, "Compact")
     _ensure_docx_style_spacing(compact, before=0, after=0, line=240)
     _ensure_docx_style_indent(compact, left=0, first_line=0)
@@ -891,6 +2319,80 @@ def _set_paragraph_style(paragraph: etree._Element, style_id: str) -> None:
     pstyle.set(_w("val"), style_id)
 
 
+def _set_paragraph_indent(
+    paragraph: etree._Element,
+    *,
+    left: int = 0,
+    first_line: int | None = None,
+    hanging: int | None = None,
+) -> None:
+    ppr = paragraph.find("./w:pPr", namespaces=_DOCX_NS)
+    if ppr is None:
+        ppr = etree.Element(_w("pPr"))
+        paragraph.insert(0, ppr)
+    ind = ppr.find("./w:ind", namespaces=_DOCX_NS)
+    if ind is None:
+        ind = etree.SubElement(ppr, _w("ind"))
+    ind.set(_w("left"), str(left))
+    if first_line is None:
+        ind.attrib.pop(_w("firstLine"), None)
+    else:
+        ind.set(_w("firstLine"), str(first_line))
+    if hanging is None:
+        ind.attrib.pop(_w("hanging"), None)
+    else:
+        ind.set(_w("hanging"), str(hanging))
+
+
+def _set_paragraph_tabs(
+    paragraph: etree._Element,
+    *,
+    center: int | None = None,
+    right: int | None = None,
+) -> None:
+    ppr = paragraph.find("./w:pPr", namespaces=_DOCX_NS)
+    if ppr is None:
+        ppr = etree.Element(_w("pPr"))
+        paragraph.insert(0, ppr)
+    tabs = ppr.find("./w:tabs", namespaces=_DOCX_NS)
+    if center is None and right is None:
+        if tabs is not None:
+            ppr.remove(tabs)
+        return
+    if tabs is None:
+        tabs = etree.SubElement(ppr, _w("tabs"))
+    else:
+        for child in list(tabs):
+            tabs.remove(child)
+    for value, position in (("center", center), ("right", right)):
+        if position is None:
+            continue
+        tab = etree.SubElement(tabs, _w("tab"))
+        tab.set(_w("val"), value)
+        tab.set(_w("pos"), str(position))
+
+
+def _clear_paragraph_tabs(paragraph: etree._Element) -> None:
+    ppr = paragraph.find("./w:pPr", namespaces=_DOCX_NS)
+    if ppr is None:
+        return
+    tabs = ppr.find("./w:tabs", namespaces=_DOCX_NS)
+    if tabs is not None:
+        ppr.remove(tabs)
+
+
+def _set_paragraph_text(paragraph: etree._Element, text: str) -> None:
+    ppr = paragraph.find("./w:pPr", namespaces=_DOCX_NS)
+    for child in list(paragraph):
+        if ppr is not None and child is ppr:
+            continue
+        paragraph.remove(child)
+    run = etree.SubElement(paragraph, _w("r"))
+    text_node = etree.SubElement(run, _w("t"))
+    text_node.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    text_node.text = text
+
+
 def _set_runs_bold(paragraph: etree._Element, *, enabled: bool) -> None:
     for run in paragraph.findall("./w:r", namespaces=_DOCX_NS):
         rpr = run.find("./w:rPr", namespaces=_DOCX_NS)
@@ -931,6 +2433,381 @@ def _set_paragraph_spacing(paragraph: etree._Element, *, before: int, after: int
     if line is not None:
         spacing.set(_w("line"), str(line))
         spacing.set(_w("lineRule"), "auto")
+
+
+def _ensure_math_para_centered(paragraph: etree._Element) -> None:
+    for math_para in paragraph.findall("./m:oMathPara", namespaces=_DOCX_NS):
+        math_para_pr = math_para.find("./m:oMathParaPr", namespaces=_DOCX_NS)
+        if math_para_pr is None:
+            math_para_pr = etree.Element(f"{{{_M_NS}}}oMathParaPr")
+            math_para.insert(0, math_para_pr)
+        jc = math_para_pr.find("./m:jc", namespaces=_DOCX_NS)
+        if jc is None:
+            jc = etree.SubElement(math_para_pr, f"{{{_M_NS}}}jc")
+        jc.set(f"{{{_M_NS}}}val", "center")
+
+
+def _remove_equation_number_runs(paragraph: etree._Element) -> None:
+    for run in list(paragraph.findall("./w:r", namespaces=_DOCX_NS)):
+        run_text = "".join(run.xpath(".//w:t/text()", namespaces=_DOCX_NS)).strip()
+        has_tab = run.find("./w:tab", namespaces=_DOCX_NS) is not None
+        if re.fullmatch(r"\(\d+\)", run_text):
+            paragraph.remove(run)
+            continue
+        if has_tab and (not run_text or re.fullmatch(r"\(\d+\)", run_text)):
+            paragraph.remove(run)
+
+
+def _normalize_display_equation_paragraph(
+    paragraph: etree._Element,
+    *,
+    center_tab: int,
+    right_tab: int,
+) -> None:
+    _remove_equation_number_runs(paragraph)
+    _set_paragraph_alignment(paragraph, "left")
+    _set_paragraph_indent(paragraph, left=0, first_line=0)
+    _set_paragraph_spacing(paragraph, before=0, after=0)
+    _set_paragraph_tabs(paragraph, center=center_tab, right=right_tab)
+
+
+def _paragraph_contains_display_math(paragraph: etree._Element) -> bool:
+    return bool(
+        paragraph.xpath("./m:oMathPara | ./m:oMath", namespaces=_DOCX_NS)
+    )
+
+
+def _display_equation_paragraph_text(paragraph: etree._Element) -> str:
+    kept: list[str] = []
+    for run in paragraph.findall("./w:r", namespaces=_DOCX_NS):
+        text = "".join(run.xpath(".//w:t/text()", namespaces=_DOCX_NS)).strip()
+        has_tab = run.find("./w:tab", namespaces=_DOCX_NS) is not None
+        if has_tab and not text:
+            continue
+        if re.fullmatch(r"\(\d+\)", text):
+            continue
+        if text:
+            kept.append(text)
+    return " ".join(kept).strip()
+
+
+def _is_display_equation_paragraph(paragraph: etree._Element) -> bool:
+    if not _paragraph_contains_display_math(paragraph):
+        return False
+    return _display_equation_paragraph_text(paragraph) == ""
+
+
+def _inline_display_math(paragraph: etree._Element) -> None:
+    for child in list(paragraph):
+        if child.tag != f"{{{_M_NS}}}oMathPara":
+            continue
+        insert_at = paragraph.index(child)
+        moved = False
+        for math_node in list(child):
+            if math_node.tag != f"{{{_M_NS}}}oMath":
+                continue
+            child.remove(math_node)
+            paragraph.insert(insert_at, math_node)
+            insert_at += 1
+            moved = True
+        if moved:
+            paragraph.remove(child)
+
+
+def _make_tab_run() -> etree._Element:
+    run = etree.Element(_w("r"))
+    etree.SubElement(run, _w("tab"))
+    return run
+
+
+def _make_text_run(text: str) -> etree._Element:
+    run = etree.Element(_w("r"))
+    text_node = etree.SubElement(run, _w("t"))
+    text_node.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    text_node.text = text
+    return run
+
+
+def _layout_display_equation_paragraph(
+    paragraph: etree._Element,
+    marker: str,
+    *,
+    center_tab: int,
+    right_tab: int,
+) -> bool:
+    _normalize_display_equation_paragraph(
+        paragraph,
+        center_tab=center_tab,
+        right_tab=right_tab,
+    )
+    _inline_display_math(paragraph)
+    if not _paragraph_contains_display_math(paragraph):
+        return False
+    math_nodes = [
+        child
+        for child in list(paragraph)
+        if child.tag == f"{{{_M_NS}}}oMath"
+    ]
+    if not math_nodes:
+        return False
+    first_index = paragraph.index(math_nodes[0])
+    paragraph.insert(first_index, _make_tab_run())
+    last_index = paragraph.index(math_nodes[-1]) + 1
+    paragraph.insert(last_index, _make_tab_run())
+    paragraph.insert(last_index + 1, _make_text_run(marker))
+    return True
+
+
+def _set_cell_width(cell: etree._Element, width: int) -> None:
+    tcpr = _ensure_tbl_child(cell, "tcPr")
+    tcw = _ensure_tbl_child(tcpr, "tcW")
+    tcw.set(_w("type"), "dxa")
+    tcw.set(_w("w"), str(width))
+
+
+def _is_equation_layout_table(table: etree._Element) -> bool:
+    caption = table.find("./w:tblPr/w:tblCaption", namespaces=_DOCX_NS)
+    return bool(caption is not None and caption.get(_w("val")) == _DOCX_EQUATION_LAYOUT_CAPTION)
+
+
+def _build_equation_layout_table(paragraph: etree._Element, marker: str) -> etree._Element:
+    _normalize_display_equation_paragraph(
+        paragraph,
+        center_tab=4860,
+        right_tab=9720,
+    )
+
+    table = etree.Element(_w("tbl"))
+    tbl_pr = etree.SubElement(table, _w("tblPr"))
+    tbl_caption = etree.SubElement(tbl_pr, _w("tblCaption"))
+    tbl_caption.set(_w("val"), _DOCX_EQUATION_LAYOUT_CAPTION)
+
+    tbl_w = etree.SubElement(tbl_pr, _w("tblW"))
+    tbl_w.set(_w("type"), "dxa")
+    tbl_w.set(_w("w"), "9360")
+
+    tbl_layout = etree.SubElement(tbl_pr, _w("tblLayout"))
+    tbl_layout.set(_w("type"), "fixed")
+
+    tbl_jc = etree.SubElement(tbl_pr, _w("jc"))
+    tbl_jc.set(_w("val"), "center")
+
+    tbl_cell_mar = etree.SubElement(tbl_pr, _w("tblCellMar"))
+    for edge in ("top", "bottom", "left", "right"):
+        mar = etree.SubElement(tbl_cell_mar, _w(edge))
+        mar.set(_w("w"), "0")
+        mar.set(_w("type"), "dxa")
+
+    tbl_borders = etree.SubElement(tbl_pr, _w("tblBorders"))
+    for edge in ("top", "bottom", "left", "right", "insideH", "insideV"):
+        border = etree.SubElement(tbl_borders, _w(edge))
+        border.set(_w("val"), "nil")
+        border.set(_w("sz"), "0")
+        border.set(_w("space"), "0")
+        border.set(_w("color"), "000000")
+
+    tbl_look = etree.SubElement(tbl_pr, _w("tblLook"))
+    tbl_look.set(_w("firstRow"), "0")
+    tbl_look.set(_w("lastRow"), "0")
+    tbl_look.set(_w("firstColumn"), "0")
+    tbl_look.set(_w("lastColumn"), "0")
+    tbl_look.set(_w("noHBand"), "1")
+    tbl_look.set(_w("noVBand"), "1")
+    tbl_look.set(_w("val"), "0000")
+
+    widths = [1440, 6480, 1440]
+    tbl_grid = etree.SubElement(table, _w("tblGrid"))
+    for width in widths:
+        grid_col = etree.SubElement(tbl_grid, _w("gridCol"))
+        grid_col.set(_w("w"), str(width))
+
+    row = etree.SubElement(table, _w("tr"))
+    trpr = etree.SubElement(row, _w("trPr"))
+    etree.SubElement(trpr, _w("cantSplit"))
+
+    left_cell = etree.SubElement(row, _w("tc"))
+    _set_cell_width(left_cell, widths[0])
+    _set_cell_v_align(left_cell, "center")
+    left_paragraph = etree.SubElement(left_cell, _w("p"))
+    _set_paragraph_spacing(left_paragraph, before=0, after=0)
+
+    center_cell = etree.SubElement(row, _w("tc"))
+    _set_cell_width(center_cell, widths[1])
+    _set_cell_v_align(center_cell, "center")
+    center_cell.append(paragraph)
+
+    right_cell = etree.SubElement(row, _w("tc"))
+    _set_cell_width(right_cell, widths[2])
+    _set_cell_v_align(right_cell, "center")
+    number_paragraph = etree.SubElement(right_cell, _w("p"))
+    _set_paragraph_alignment(number_paragraph, "right")
+    _set_paragraph_indent(number_paragraph, left=0, first_line=0)
+    _set_paragraph_spacing(number_paragraph, before=0, after=0)
+    _set_paragraph_text(number_paragraph, marker)
+
+    return table
+
+
+def _equation_layout_table_ok(table: etree._Element, marker: str | None = None) -> bool:
+    _ = marker
+    return _is_equation_layout_table(table)
+
+
+def _display_equation_paragraph_aligned(paragraph: etree._Element) -> bool:
+    if not _is_display_equation_paragraph(paragraph):
+        return True
+    ppr = paragraph.find("./w:pPr", namespaces=_DOCX_NS)
+    if ppr is None:
+        return False
+    if paragraph.xpath("./m:oMathPara", namespaces=_DOCX_NS):
+        return False
+    jc = ppr.find("./w:jc", namespaces=_DOCX_NS)
+    if jc is not None and jc.get(_w("val")) not in {None, "left"}:
+        return False
+    tabs = ppr.find("./w:tabs", namespaces=_DOCX_NS)
+    if tabs is None:
+        return False
+    tab_values = [
+        (tab.get(_w("val")), tab.get(_w("pos")))
+        for tab in tabs.findall("./w:tab", namespaces=_DOCX_NS)
+    ]
+    if len(tab_values) < 2 or tab_values[0][0] != "center" or tab_values[1][0] != "right":
+        return False
+    ind = ppr.find("./w:ind", namespaces=_DOCX_NS)
+    if ind is None:
+        return False
+    if ind.get(_w("left")) != "0" or ind.get(_w("firstLine")) != "0":
+        return False
+    tab_runs = paragraph.xpath("./w:r[w:tab]", namespaces=_DOCX_NS)
+    if len(tab_runs) < 2:
+        return False
+    markers = [
+        "".join(run.xpath(".//w:t/text()", namespaces=_DOCX_NS)).strip()
+        for run in paragraph.findall("./w:r", namespaces=_DOCX_NS)
+    ]
+    return any(re.fullmatch(r"\(\d+\)", marker) for marker in markers)
+
+
+def _display_equation_alignment_ok(document_root: etree._Element) -> bool:
+    body = document_root.find("./w:body", namespaces=_DOCX_NS)
+    if body is None:
+        return True
+    for child in body:
+        if child.tag == _w("tbl") and _is_equation_layout_table(child):
+            return False
+        if child.tag == _w("p") and _is_display_equation_paragraph(child):
+            if not _display_equation_paragraph_aligned(child):
+                return False
+    return True
+
+
+def _docx_display_math_omml_ok(document_root: etree._Element) -> bool:
+    for paragraph in document_root.xpath(".//w:body//w:p", namespaces=_DOCX_NS):
+        text = _docx_paragraph_text(paragraph)
+        if any(marker in text for marker in ("$$", "\\begin{aligned}", "\\end{aligned}", "\\[")):
+            return False
+    return True
+
+
+def _docx_table_caption_numbering_ok(document_root: etree._Element) -> bool:
+    body = document_root.find("./w:body", namespaces=_DOCX_NS)
+    if body is None:
+        return True
+    table_number = 0
+    children = list(body)
+    for idx, child in enumerate(children):
+        if child.tag != _w("tbl"):
+            continue
+        table_number += 1
+        prev_idx = idx - 1
+        while prev_idx >= 0 and children[prev_idx].tag == _w("p") and not _docx_paragraph_has_payload(children[prev_idx]):
+            prev_idx -= 1
+        if prev_idx < 0 or children[prev_idx].tag != _w("p"):
+            return False
+        caption_paragraph = children[prev_idx]
+        if _docx_paragraph_style(caption_paragraph) != "TableCaption":
+            return False
+        caption_text = _normalize_docx_caption_text(_docx_paragraph_text(caption_paragraph))
+        if not (
+            re.match(rf"^Table\s+{table_number}[.:]?\s+", caption_text, re.IGNORECASE)
+            or caption_text == f"Table {table_number}."
+        ):
+            return False
+    return True
+
+
+def _normalize_docx_figure_caption_text(text: str, figure_number: int) -> str:
+    normalized = _normalize_docx_caption_text(text)
+    if not normalized:
+        return f"Figure {figure_number}."
+    if re.match(r"^Figure\s+\d+[.:]?\s*", normalized, re.IGNORECASE):
+        return normalized
+    return f"Figure {figure_number}. {normalized}"
+
+
+def _docx_figure_caption_numbering_ok(document_root: etree._Element) -> bool:
+    paragraphs = list(document_root.xpath(".//w:body/w:p", namespaces=_DOCX_NS))
+    figure_counter = 0
+    for idx, paragraph in enumerate(paragraphs):
+        if _docx_paragraph_style(paragraph) != "CaptionedFigure":
+            continue
+        figure_counter += 1
+        matched_caption = False
+        for next_paragraph in paragraphs[idx + 1 :]:
+            next_style = _docx_paragraph_style(next_paragraph)
+            if next_style == "ImageCaption":
+                caption_text = _normalize_docx_caption_text(
+                    _docx_paragraph_text(next_paragraph)
+                )
+                matched_caption = bool(
+                    re.match(
+                        rf"^Figure\s+{figure_counter}[.:]?\s+",
+                        caption_text,
+                        re.IGNORECASE,
+                    )
+                    or caption_text == f"Figure {figure_counter}."
+                )
+                break
+            if next_style in {
+                "CaptionedFigure",
+                "Heading1",
+                "Heading2",
+                "Heading3",
+                "TableCaption",
+            }:
+                break
+        if not matched_caption:
+            return False
+    return True
+
+
+def _normalize_docx_figure_captions(document_root: etree._Element) -> bool:
+    paragraphs = list(document_root.xpath(".//w:body/w:p", namespaces=_DOCX_NS))
+    figure_counter = 0
+    for idx, paragraph in enumerate(paragraphs):
+        if _docx_paragraph_style(paragraph) != "CaptionedFigure":
+            continue
+        figure_counter += 1
+        for next_paragraph in paragraphs[idx + 1 :]:
+            next_style = _docx_paragraph_style(next_paragraph)
+            if next_style == "ImageCaption":
+                original = _docx_paragraph_text(next_paragraph)
+                normalized = _normalize_docx_figure_caption_text(
+                    original,
+                    figure_counter,
+                )
+                if normalized != original:
+                    _set_paragraph_text(next_paragraph, normalized)
+                break
+            if next_style in {
+                "CaptionedFigure",
+                "Heading1",
+                "Heading2",
+                "Heading3",
+                "TableCaption",
+            }:
+                break
+    return _docx_figure_caption_numbering_ok(document_root)
 
 
 def _set_row_border(row: etree._Element, edge: str, *, val: str, sz: int) -> None:
@@ -999,6 +2876,8 @@ def _apply_table_column_widths(table: etree._Element, widths: list[int]) -> None
 def _style_docx_tables(document_root: etree._Element) -> int:
     styled = 0
     for table in document_root.xpath(".//w:body/w:tbl", namespaces=_DOCX_NS):
+        if _is_equation_layout_table(table):
+            continue
         tbl_pr = _ensure_tbl_child(table, "tblPr")
         tbl_w = _ensure_tbl_child(tbl_pr, "tblW")
         tbl_w.set(_w("type"), "pct")
@@ -1060,12 +2939,93 @@ def _style_docx_tables(document_root: etree._Element) -> int:
     return styled
 
 
+def _docx_text_width(document_root: etree._Element) -> int:
+    page_width = 12240
+    left_margin = 1260
+    right_margin = 1260
+    body = document_root.find("./w:body", namespaces=_DOCX_NS)
+    if body is not None:
+        sect = body.find("./w:sectPr", namespaces=_DOCX_NS)
+        if sect is not None:
+            pg_sz = sect.find("./w:pgSz", namespaces=_DOCX_NS)
+            pg_mar = sect.find("./w:pgMar", namespaces=_DOCX_NS)
+            if pg_sz is not None:
+                try:
+                    page_width = int(pg_sz.get(_w("w"), page_width))
+                except (TypeError, ValueError):
+                    page_width = 12240
+            if pg_mar is not None:
+                try:
+                    left_margin = int(pg_mar.get(_w("left"), left_margin))
+                    right_margin = int(pg_mar.get(_w("right"), right_margin))
+                except (TypeError, ValueError):
+                    left_margin = 1260
+                    right_margin = 1260
+    return max(3600, page_width - left_margin - right_margin)
+
+
+def _extract_equation_paragraph_from_layout_table(table: etree._Element) -> etree._Element | None:
+    cells = table.findall("./w:tr/w:tc", namespaces=_DOCX_NS)
+    if len(cells) != 3:
+        return None
+    paragraph = cells[1].find("./w:p", namespaces=_DOCX_NS)
+    if paragraph is None:
+        return None
+    cells[1].remove(paragraph)
+    return paragraph
+
+
+def _append_display_equation_numbers(document_root: etree._Element) -> int:
+    body = document_root.find("./w:body", namespaces=_DOCX_NS)
+    if body is None:
+        return 0
+    text_width = _docx_text_width(document_root)
+    center_tab = text_width // 2
+    right_tab = text_width
+    numbered = 0
+    for child in list(body):
+        if child.tag == _w("p") and _is_display_equation_paragraph(child):
+            numbered += 1
+            marker = f"({numbered})"
+            _layout_display_equation_paragraph(
+                child,
+                marker,
+                center_tab=center_tab,
+                right_tab=right_tab,
+            )
+            continue
+        if child.tag == _w("tbl") and _is_equation_layout_table(child):
+            numbered += 1
+            marker = f"({numbered})"
+            paragraph = _extract_equation_paragraph_from_layout_table(child)
+            if paragraph is None:
+                continue
+            if not _layout_display_equation_paragraph(
+                paragraph,
+                marker,
+                center_tab=center_tab,
+                right_tab=right_tab,
+            ):
+                continue
+            insert_at = body.index(child)
+            body.insert(insert_at, paragraph)
+            body.remove(child)
+    return numbered
+
+
 def _postprocess_editorial_docx(docx_path: Path) -> dict[str, object]:
     quality: dict[str, object] = {
         "clean": False,
         "heading_numbering_ok": False,
         "removed_empty_paragraphs": 0,
         "styled_tables": 0,
+        "equation_numbers_present": False,
+        "equation_alignment_ok": False,
+        "display_math_omml_ok": False,
+        "keywords_present": False,
+        "numeric_citations_plain": False,
+        "figure_caption_numbering_ok": False,
+        "table_caption_numbering_ok": False,
         "issues": [],
     }
     if not docx_path.exists():
@@ -1089,9 +3049,35 @@ def _postprocess_editorial_docx(docx_path: Path) -> dict[str, object]:
         _style_inline_numeric_citations(document_root)
         _normalize_references_heading(document_root)
         styled_tables = _style_docx_tables(document_root)
+        equation_numbers = _append_display_equation_numbers(document_root)
+        equation_alignment_ok = _display_equation_alignment_ok(document_root)
+        display_math_omml_ok = _docx_display_math_omml_ok(document_root)
         _scale_captioned_figures(document_root)
+        figure_caption_numbering_ok = _normalize_docx_figure_captions(document_root)
+        table_caption_numbering_ok = _docx_table_caption_numbering_ok(document_root)
         _apply_docx_page_layout(document_root)
         _normalize_docx_styles(styles_root)
+        keywords_present = bool(
+            document_root.xpath(
+                './/w:p[w:pPr/w:pStyle[@w:val="Keywords"]]',
+                namespaces=_DOCX_NS,
+            )
+        )
+        numeric_citations_plain = not bool(
+            document_root.xpath(
+                './/w:vertAlign[@w:val="superscript"]',
+                namespaces=_DOCX_NS,
+            )
+        )
+        issues: list[str] = []
+        if not equation_alignment_ok:
+            issues.append("equation_alignment_not_centered")
+        if not display_math_omml_ok:
+            issues.append("display_math_not_omml")
+        if not figure_caption_numbering_ok:
+            issues.append("figure_caption_numbering_missing")
+        if not table_caption_numbering_ok:
+            issues.append("table_caption_numbering_missing")
         files["word/document.xml"] = etree.tostring(
             document_root,
             encoding="UTF-8",
@@ -1112,17 +3098,130 @@ def _postprocess_editorial_docx(docx_path: Path) -> dict[str, object]:
                 zf.writestr(name, data)
         quality.update(
             {
-                "clean": True,
+                "clean": not issues,
                 "heading_numbering_ok": heading_numbering_ok,
                 "removed_empty_paragraphs": removed,
                 "styled_tables": styled_tables,
-                "issues": [],
+                "equation_numbers_present": equation_numbers > 0,
+                "equation_alignment_ok": equation_alignment_ok,
+                "display_math_omml_ok": display_math_omml_ok,
+                "keywords_present": keywords_present,
+                "numeric_citations_plain": numeric_citations_plain,
+                "figure_caption_numbering_ok": figure_caption_numbering_ok,
+                "table_caption_numbering_ok": table_caption_numbering_ok,
+                "issues": issues,
             }
         )
         return quality
     except Exception as exc:  # noqa: BLE001
         quality["issues"] = [f"postprocess_failed:{exc}"]
         return quality
+
+
+def _count_pdf_pages(pdf_path: Path) -> int:
+    if not pdf_path.exists():
+        return 0
+    pdfinfo_bin = which("pdfinfo")
+    if pdfinfo_bin:
+        try:
+            result = subprocess.run(
+                [pdfinfo_bin, str(pdf_path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+            )
+            output = (result.stdout or "") + "\n" + (result.stderr or "")
+            match = re.search(r"(?mi)^Pages:\s*(\d+)\s*$", output)
+            if result.returncode == 0 and match:
+                return int(match.group(1))
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        raw = pdf_path.read_bytes()
+    except OSError:
+        return 0
+    return max(raw.count(b"/Type /Page"), 0)
+
+
+def _convert_docx_to_pdf_for_page_count(docx_path: Path) -> Path | None:
+    soffice_bin = which("soffice")
+    if not soffice_bin or not docx_path.exists():
+        return None
+    output_dir = docx_path.parent / ".docx_page_count_pdf"
+    try:
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                soffice_bin,
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(output_dir),
+                str(docx_path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if result.returncode != 0:
+        return None
+    pdf_path = output_dir / f"{docx_path.stem}.pdf"
+    return pdf_path if pdf_path.exists() else None
+
+
+def _audit_editorial_constraints(
+    stage_dir: Path,
+    *,
+    markdown: str,
+    config: RCConfig,
+) -> dict[str, object]:
+    quality: dict[str, object] = {
+        "reference_count": 0,
+        "reference_limit_ok": True,
+        "docx_page_count": 0,
+        "docx_page_limit_ok": True,
+        "issues": [],
+        "warnings": [],
+    }
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    citation_keys = _collect_citation_keys(markdown)
+    quality["reference_count"] = len(citation_keys)
+    if config.export.max_references > 0 and len(citation_keys) > config.export.max_references:
+        quality["reference_limit_ok"] = False
+        issues.append(
+            f"reference_limit_exceeded:{len(citation_keys)}>{config.export.max_references}"
+        )
+
+    if config.export.docx_page_limit > 0:
+        docx_path = stage_dir / "paper_repaired.docx"
+        pdf_path = _convert_docx_to_pdf_for_page_count(docx_path)
+        page_count = _count_pdf_pages(pdf_path) if pdf_path else 0
+        quality["docx_page_count"] = page_count
+        if page_count <= 0:
+            warnings.append("docx_page_count_unavailable")
+        elif page_count > config.export.docx_page_limit:
+            quality["docx_page_limit_ok"] = False
+            issues.append(
+                f"docx_page_limit_exceeded:{page_count}>{config.export.docx_page_limit}"
+            )
+
+    quality["issues"] = issues
+    quality["warnings"] = warnings
+    return quality
 
 
 def _pandoc_docx_citeproc_args(pandoc_bin: str) -> list[str]:
@@ -1176,6 +3275,7 @@ def _is_explanation_for_bundle(
     block: str,
     figure_number: int | None,
     image_path: str,
+    alt_text: str,
     caption_block: str | None,
 ) -> bool:
     stripped = block.strip()
@@ -1186,6 +3286,8 @@ def _is_explanation_for_bundle(
         return False
     if figure_number is not None and re.search(rf"\bFigure\s+{figure_number}\b", stripped, re.IGNORECASE):
         return True
+    if re.search(r"\bFigure\s+\d+\b", stripped, re.IGNORECASE):
+        return True
     image_name = Path(image_path).name
     if image_name.startswith("pipeline_overview_") and "protocol" in lowered:
         return True
@@ -1193,12 +3295,11 @@ def _is_explanation_for_bundle(
         "architecture" in lowered or "model" in lowered
     ):
         return True
-    caption_text = _clean_caption_text(caption_block or "").lower()
-    if caption_text:
-        keywords = [w for w in re.findall(r"[a-zA-Z]{4,}", caption_text)[:6] if w not in {"figure", "across", "methods"}]
-        overlap = sum(1 for word in keywords if word in lowered)
-        if overlap >= 2:
-            return True
+    caption_text = _clean_caption_text(caption_block or "")
+    if _keyword_overlap(stripped, caption_text) >= 2:
+        return True
+    if _keyword_overlap(stripped, alt_text) >= 2:
+        return True
     return any(cue in lowered for cue in ("shown", "below", "summar", "illustrat", "visual"))
 
 
@@ -1209,6 +3310,7 @@ def _extract_bundles(blocks: list[str]) -> list[_Bundle]:
         image_match = _IMAGE_RE.search(block)
         if not image_match:
             continue
+        alt_text = _extract_image_alt_text(block)
         caption_index = None
         explanation_index = None
         start = idx
@@ -1233,6 +3335,7 @@ def _extract_bundles(blocks: list[str]) -> list[_Bundle]:
             blocks[start - 1],
             figure_number,
             image_match.group(1),
+            alt_text,
             caption_block,
         ):
             explanation_index = start - 1
@@ -1243,6 +3346,7 @@ def _extract_bundles(blocks: list[str]) -> list[_Bundle]:
             blocks[trailing_idx],
             figure_number,
             image_match.group(1),
+            alt_text,
             caption_block,
         ):
             explanation_indices.append(trailing_idx)
@@ -1250,6 +3354,7 @@ def _extract_bundles(blocks: list[str]) -> list[_Bundle]:
         bundles.append(
             _Bundle(
                 image_path=image_match.group(1),
+                alt_text=alt_text,
                 image_index=idx,
                 start=start,
                 end=end,
@@ -1262,7 +3367,7 @@ def _extract_bundles(blocks: list[str]) -> list[_Bundle]:
     return bundles
 
 
-def _find_first_figure_reference_index(
+def _find_first_explicit_figure_reference_index(
     blocks: list[str],
     figure_number: int,
 ) -> int | None:
@@ -1271,6 +3376,29 @@ def _find_first_figure_reference_index(
         if _IMAGE_RE.search(block) or _is_caption_block(block):
             continue
         if pattern.search(block):
+            return idx
+    return None
+
+
+def _find_first_figure_reference_index(
+    blocks: list[str],
+    figure_number: int,
+) -> int | None:
+    return _find_first_explicit_figure_reference_index(blocks, figure_number)
+
+
+def _find_first_explicit_table_reference_index(
+    blocks: list[str],
+    table_number: int,
+) -> int | None:
+    pattern = re.compile(rf"\bTable\s+{table_number}\b", re.IGNORECASE)
+    for idx, block in enumerate(blocks):
+        stripped = block.strip()
+        if stripped.startswith("|") or _TABLE_CAPTION_RE.match(stripped):
+            continue
+        if _IMAGE_RE.search(stripped) or _is_caption_block(stripped):
+            continue
+        if pattern.search(stripped):
             return idx
     return None
 
@@ -1315,8 +3443,12 @@ def _clean_caption_text(block: str) -> str:
     italic_match = _ITALIC_FIGURE_CAPTION_RE.match(text)
     if italic_match:
         return italic_match.group(1).strip()
+    plain_match = _PLAIN_FIGURE_CAPTION_RE.match(text)
+    if plain_match:
+        return re.sub(r"^Figure\s+\d+[.:]\s*", "", text, flags=re.IGNORECASE).strip()
     text = re.sub(r"^\*\*Figure\s+\d+[.:]?\s*\*\*\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^\*Figure\s+\d+[.:]?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^Figure\s+\d+[.:]?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\*$", "", text).strip()
     return text.replace("**", "").replace("*", "").strip()
 
@@ -1341,6 +3473,7 @@ def _sentence_case(text: str) -> str:
 
 def _build_explanation(
     image_path: str,
+    alt_text: str,
     caption_block: str | None,
     section: str,
 ) -> str:
@@ -1351,6 +3484,8 @@ def _build_explanation(
         return "The model architecture is summarized visually below."
 
     caption_text = _clean_caption_text(caption_block or "")
+    if not caption_text:
+        caption_text = alt_text.strip()
     if caption_text:
         if caption_text.endswith("."):
             caption_text = caption_text[:-1]
@@ -1434,7 +3569,12 @@ def _add_missing_explanations(blocks: list[str]) -> tuple[list[str], int]:
             if bundle.caption_index is not None and bundle.caption_index < len(blocks)
             else None
         )
-        explanation = _build_explanation(bundle.image_path, caption_block, bundle.section)
+        explanation = _build_explanation(
+            bundle.image_path,
+            bundle.alt_text,
+            caption_block,
+            bundle.section,
+        )
         blocks = blocks[: bundle.start] + [explanation] + blocks[bundle.start :]
         inserted += 1
     return blocks, inserted
@@ -1464,8 +3604,18 @@ def _audit_markdown(blocks: list[str]) -> list[dict[str, object]]:
                 }
             )
         if bundle.figure_number is not None:
-            ref_idx = _find_first_figure_reference_index(blocks, bundle.figure_number)
-            if ref_idx is not None and bundle.start - ref_idx > 2:
+            ref_idx = _find_first_explicit_figure_reference_index(blocks, bundle.figure_number)
+            if ref_idx is None:
+                issues.append(
+                    {
+                        "type": "missing_explicit_figure_reference",
+                        "severity": "high",
+                        "image": image_name,
+                        "section": bundle.section,
+                        "figure_number": bundle.figure_number,
+                    }
+                )
+            elif bundle.start - ref_idx > 2:
                 issues.append(
                     {
                         "type": "far_from_first_reference",
@@ -1476,6 +3626,22 @@ def _audit_markdown(blocks: list[str]) -> list[dict[str, object]]:
                         "distance_blocks": bundle.start - ref_idx,
                     }
                 )
+    for idx, block in enumerate(blocks):
+        caption = block.strip()
+        if not _TABLE_CAPTION_RE.match(caption):
+            continue
+        table_number = _extract_table_number(caption)
+        if table_number is None:
+            continue
+        if _find_first_explicit_table_reference_index(blocks, table_number) is None:
+            issues.append(
+                {
+                    "type": "missing_explicit_table_reference",
+                    "severity": "high",
+                    "table_number": table_number,
+                    "block_index": idx,
+                }
+            )
     return issues
 
 
@@ -1516,37 +3682,27 @@ def _compile_editorial_tex(
     stage_dir: Path,
     repaired_markdown: str,
     config: RCConfig,
+    *,
+    run_dir: Path | None = None,
 ) -> tuple[list[str], list[str], bool]:
-    artifacts: list[str] = []
-    evidence: list[str] = []
-    compile_ok = False
     try:
-        from researchclaw.templates import get_template, markdown_to_latex
-        from researchclaw.templates.compiler import compile_latex
-
-        tpl = get_template(config.export.target_conference)
-        tex = markdown_to_latex(
-            repaired_markdown,
-            tpl,
-            title=_extract_title(repaired_markdown),
-            authors=config.export.authors,
-            bib_file=config.export.bib_file,
+        from researchclaw.pipeline.stage_impls._review_publish import (
+            _export_latex_pdf_artifacts,
         )
-        tex_path = stage_dir / "paper_repaired.tex"
-        tex_path.write_text(tex, encoding="utf-8")
-        artifacts.append("paper_repaired.tex")
-        evidence.append("stage-24/paper_repaired.tex")
 
-        compile_result = compile_latex(tex_path, max_attempts=2, timeout=120)
-        if compile_result.success:
-            compile_ok = True
-            pdf_path = tex_path.with_suffix(".pdf")
-            if pdf_path.exists():
-                artifacts.append(pdf_path.name)
-                evidence.append(f"stage-24/{pdf_path.name}")
+        return _export_latex_pdf_artifacts(
+            stage_dir=stage_dir,
+            run_dir=run_dir or stage_dir.parent,
+            markdown=repaired_markdown,
+            config=config,
+            output_tex_name="paper_repaired.tex",
+            output_pdf_name="paper_repaired.pdf",
+            source_markdown_for_charts=repaired_markdown,
+            artifacts_label="Stage 24",
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Stage 24: Editorial LaTeX generation skipped: %s", exc)
-    return artifacts, evidence, compile_ok
+    return [], [], False
 
 
 def _export_editorial_docx(
@@ -1657,6 +3813,7 @@ def _build_editorial_task(
     iteration: int,
     source_label: str,
     mode: str,
+    submission_profile: str = "default",
 ) -> str:
     issues_json = json.dumps(issue_report, indent=2, ensure_ascii=False)
     mode_instruction = {
@@ -1674,6 +3831,24 @@ def _build_editorial_task(
             "substantive narrative beyond what is already strongly supported by the draft."
         ),
     }.get(mode, "Primary goal: improve the final paper conservatively.")
+    shared_content_rules = (
+        "Shared content rules:\n"
+        "- Ensure the abstract is followed by a **Keywords:** block.\n"
+        "- Keep inline math inline; do not force inline symbols into display equations.\n"
+        "- Every display equation must be written as a standalone equation block that can be numbered downstream.\n"
+        "- Every display equation needs a natural lead-in sentence before it and concise prose for important symbols after it when needed.\n"
+        "- Avoid mechanical `in Equation (n)` and `In Equation (n), ...` templates in the canonical markdown prose.\n"
+        "- Every retained figure and table must be cited in nearby body text with an explicit `Figure N` or `Table N` reference.\n"
+        "- Remove dangling commas or periods around display equations.\n\n"
+    )
+    profile_rules = ""
+    if submission_profile == "ei_conference":
+        profile_rules = (
+            "EI conference profile rules:\n"
+            "- Do not keep a standalone Related Work section; integrate necessary prior-work comparison into nearby sections.\n"
+            "- Rename the main results chapter to `Results and Analysis`.\n"
+            "- Fold Discussion and Limitations content into Conclusion.\n\n"
+        )
     return (
         f"# Stage 24 Editorial Repair Task\n\n"
         f"Iteration: {iteration}\n"
@@ -1682,15 +3857,18 @@ def _build_editorial_task(
         f"Mode:\n{mode_instruction}\n\n"
         "Goals:\n"
         "1. Fix figure placement and figure-text proximity issues.\n"
-        "2. Ensure every retained figure has a local explanation or explicit discussion.\n"
+        "2. Ensure every retained figure and table has an explicit numbered body-text reference.\n"
         "3. Improve local flow around figures and clean obvious editorial rough edges.\n"
         "4. Fix ugly layout outcomes when they make the paper look unfinished, including single-figure pages, awkward page breaks, large blank areas around floats, and figures or tables that visibly break the opening of the next section.\n"
         "5. Write a structured `codex_review.json` describing remaining issues, risks, and whether another round is needed.\n\n"
+        f"{shared_content_rules}"
+        f"{profile_rules}"
         "Hard constraints:\n"
         "- Do not change experiment numbers, metric values, or table values.\n"
         "- Do not add or remove citation keys.\n"
         "- Do not invent new experiments or change conclusions' factual meaning.\n"
         "- Do not rewrite unrelated sections.\n"
+        "- When fixing PDF layout issues, keep the target as normal LaTeX paper layout; do not imitate Word-style page layout in markdown.\n"
         "- Only edit `paper_repaired.md` and write `codex_review.json`.\n\n"
         "Allowed actions:\n"
         "- Move complete figure bundles closer to their first discussion.\n"
@@ -1727,6 +3905,7 @@ def _prepare_codex_workspace(
     iteration: int,
     source_label: str,
     mode: str,
+    submission_profile: str = "default",
     previous_review: dict[str, object] | None = None,
     previous_assessment: dict[str, object] | None = None,
 ) -> Path:
@@ -1744,6 +3923,7 @@ def _prepare_codex_workspace(
             iteration=iteration,
             source_label=source_label,
             mode=mode,
+            submission_profile=submission_profile,
         ),
         encoding="utf-8",
     )
@@ -2039,6 +4219,7 @@ def _run_codex_editorial_loop(
             iteration=iteration,
             source_label=source_label,
             mode=repair_cfg.mode,
+            submission_profile=config.export.submission_profile,
             previous_review=latest_codex_review,
             previous_assessment=latest_assessment,
         )
@@ -2101,6 +4282,7 @@ def _run_codex_editorial_loop(
             payload,
             mode=repair_cfg.mode,
         )
+        integrity_issues = _markdown_integrity_issues(payload, baseline=current_markdown)
         if boundary_violations:
             assessment = {
                 "status": "fail",
@@ -2132,9 +4314,36 @@ def _run_codex_editorial_loop(
                 assessment=assessment,
                 error=f"Stage 24 boundary violation: {', '.join(boundary_violations)}",
             )
+        if integrity_issues:
+            iteration_log.append(
+                {
+                    "iteration": iteration,
+                    "action": "codex_editorial_review_and_rewrite",
+                    "changed": changed,
+                    "integrity_issues": integrity_issues,
+                }
+            )
+            latest_codex_review = codex_review
+            latest_assessment = {
+                "status": "fail",
+                "remaining_issue_count": len(issue_report),
+                "remaining_high_severity_issues": len(high_issues),
+                "compile_clean": False,
+                "improved_vs_stage22": False,
+                "boundary_violations": [],
+                "integrity_issues": integrity_issues,
+                "codex_reported_remaining_risks": codex_review.get("remaining_risks", []),
+                "used_iterations": iteration,
+            }
+            review["current_issues"] = issue_report
+            continue
         current_markdown = payload
         issue_report = _audit_markdown(_split_blocks(current_markdown))
-        compile_artifacts, _, compile_clean = _compile_editorial_tex(stage_dir, current_markdown, config)
+        compile_artifacts, _, compile_clean = _compile_editorial_tex(
+            stage_dir,
+            current_markdown,
+            config,
+        )
         _ = compile_artifacts
         compiled_layout_issues = _audit_compiled_layout(stage_dir)
         if compiled_layout_issues:
@@ -2307,7 +4516,33 @@ def _execute_final_editorial_repair(
         )
 
     loop_result = _run_codex_editorial_loop(stage_dir, run_dir, source_markdown, config)
-    repaired_markdown = loop_result.markdown
+    table_caption_sources = tuple(
+        path.read_text(encoding="utf-8")
+        for path in (
+            run_dir / "stage-24" / "paper_repaired.md",
+            run_dir / "stage-23" / "paper_final_verified.md",
+            run_dir / "stage-22" / "paper_final.md",
+        )
+        if path.exists() and path.stat().st_size > 0
+    )
+    normalized_markdown = _normalize_final_paper_markdown(
+        loop_result.markdown,
+        topic=config.research.topic,
+        domains=config.research.domains,
+        submission_profile=config.export.submission_profile,
+        table_caption_sources=table_caption_sources,
+        figure_reference_sources=table_caption_sources,
+    )
+    limited_markdown = _enforce_reference_limit(
+        normalized_markdown,
+        max_references=config.export.max_references,
+    )
+    repaired_markdown = limited_markdown
+    if not _preserves_required_structure(normalized_markdown, limited_markdown):
+        logger.warning(
+            "Stage 24: reference-limit pass damaged markdown structure; keeping normalized markdown"
+        )
+        repaired_markdown = normalized_markdown
     (stage_dir / "paper_repaired.md").write_text(repaired_markdown, encoding="utf-8")
     _write_stage24_failure(
         stage_dir,
@@ -2317,6 +4552,7 @@ def _execute_final_editorial_repair(
     )
 
     _stage_editorial_compile_inputs(stage_dir, run_dir)
+    _sync_bibliography_with_markdown(stage_dir, repaired_markdown)
 
     artifacts = [
         "paper_editorial_input.md",
@@ -2335,7 +4571,9 @@ def _execute_final_editorial_repair(
         "stage-24/editorial_final_assessment.json",
     ]
     compile_artifacts, compile_evidence, _ = _compile_editorial_tex(
-        stage_dir, repaired_markdown, config
+        stage_dir,
+        repaired_markdown,
+        config,
     )
     artifacts.extend(compile_artifacts)
     evidence_refs.extend(compile_evidence)
@@ -2344,24 +4582,142 @@ def _execute_final_editorial_repair(
         authors=config.export.authors,
         bibliography_name=config.export.bib_file + ".bib",
     )
-    artifacts.extend(docx_artifacts)
-    evidence_refs.extend(docx_evidence)
+    _extend_unique(artifacts, docx_artifacts)
+    _extend_unique(evidence_refs, docx_evidence)
+    docx_quality_path = stage_dir / "docx_quality.json"
+    docx_quality_payload = _load_docx_quality_payload(docx_quality_path)
+    canonical_markdown_compressed_for_page_limit = False
+    canonical_page_compression_rounds = 0
+    compression_limit = max(1, config.experiment.editorial_repair.max_iterations)
+    for compression_round in range(1, compression_limit + 1):
+        constraint_quality = _audit_editorial_constraints(
+            stage_dir,
+            markdown=repaired_markdown,
+            config=config,
+        )
+        existing_issues = (
+            list(cast(list[object], docx_quality_payload.get("issues", [])))
+            if isinstance(docx_quality_payload.get("issues", []), list)
+            else []
+        )
+        existing_warnings = (
+            list(cast(list[object], docx_quality_payload.get("warnings", [])))
+            if isinstance(docx_quality_payload.get("warnings", []), list)
+            else []
+        )
+        limit_issues = list(cast(list[object], constraint_quality.get("issues", [])))
+        limit_warnings = list(cast(list[object], constraint_quality.get("warnings", [])))
+        docx_quality_payload.update(constraint_quality)
+        docx_quality_payload["issues"] = existing_issues + [
+            issue for issue in limit_issues if issue not in existing_issues
+        ]
+        docx_quality_payload["warnings"] = existing_warnings + [
+            warning for warning in limit_warnings if warning not in existing_warnings
+        ]
+
+        needs_page_compression = (
+            config.export.docx_page_limit > 0
+            and not docx_quality_payload.get("docx_page_limit_ok", True)
+            and int(docx_quality_payload.get("docx_page_count", 0)) > 0
+        )
+        if not needs_page_compression:
+            break
+
+        compressed_markdown = _compress_markdown_for_docx_limit(
+            repaired_markdown,
+            current_page_count=int(docx_quality_payload.get("docx_page_count", 0)),
+            page_limit=config.export.docx_page_limit,
+            submission_profile=config.export.submission_profile,
+            compression_round=compression_round,
+        )
+        if compressed_markdown.strip() == repaired_markdown.strip():
+            break
+
+        repaired_markdown = compressed_markdown
+        canonical_markdown_compressed_for_page_limit = True
+        canonical_page_compression_rounds = compression_round
+        (stage_dir / "paper_repaired.md").write_text(
+            repaired_markdown,
+            encoding="utf-8",
+        )
+        _sync_bibliography_with_markdown(stage_dir, repaired_markdown)
+        compile_artifacts, compile_evidence, _ = _compile_editorial_tex(
+            stage_dir,
+            repaired_markdown,
+            config,
+        )
+        _extend_unique(artifacts, compile_artifacts)
+        _extend_unique(evidence_refs, compile_evidence)
+        docx_artifacts, docx_evidence, _ = _export_editorial_docx(
+            stage_dir,
+            authors=config.export.authors,
+            bibliography_name=config.export.bib_file + ".bib",
+        )
+        _extend_unique(artifacts, docx_artifacts)
+        _extend_unique(evidence_refs, docx_evidence)
+        docx_quality_payload = _load_docx_quality_payload(docx_quality_path)
+
+    docx_quality_path.write_text(
+        json.dumps(docx_quality_payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
     assessment_path = stage_dir / "editorial_final_assessment.json"
     if assessment_path.exists():
         assessment_payload = json.loads(assessment_path.read_text(encoding="utf-8"))
-        docx_quality_path = stage_dir / "docx_quality.json"
         docx_quality = (
             json.loads(docx_quality_path.read_text(encoding="utf-8"))
             if docx_quality_path.exists()
-            else {"clean": False, "heading_numbering_ok": False, "issues": ["docx_not_exported"]}
+            else {
+                "clean": False,
+                "heading_numbering_ok": False,
+                "equation_alignment_ok": False,
+                "display_math_omml_ok": False,
+                "figure_caption_numbering_ok": False,
+                "table_caption_numbering_ok": False,
+                "issues": ["docx_not_exported"],
+            }
         )
         assessment_payload["docx_clean"] = bool(docx_quality.get("clean", False))
         assessment_payload["docx_heading_numbering_ok"] = bool(
             docx_quality.get("heading_numbering_ok", False)
         )
+        assessment_payload["docx_equation_alignment_ok"] = bool(
+            docx_quality.get("equation_alignment_ok", False)
+        )
+        assessment_payload["docx_display_math_omml_ok"] = bool(
+            docx_quality.get("display_math_omml_ok", False)
+        )
+        assessment_payload["docx_keywords_present"] = bool(
+            docx_quality.get("keywords_present", False)
+        )
+        assessment_payload["docx_figure_caption_numbering_ok"] = bool(
+            docx_quality.get("figure_caption_numbering_ok", False)
+        )
+        assessment_payload["docx_table_caption_numbering_ok"] = bool(
+            docx_quality.get("table_caption_numbering_ok", False)
+        )
+        assessment_payload["docx_numeric_citations_plain"] = bool(
+            docx_quality.get("numeric_citations_plain", False)
+        )
+        assessment_payload["reference_limit_ok"] = bool(
+            docx_quality.get("reference_limit_ok", True)
+        )
+        assessment_payload["reference_count"] = int(docx_quality.get("reference_count", 0))
+        assessment_payload["docx_page_limit_ok"] = bool(
+            docx_quality.get("docx_page_limit_ok", True)
+        )
+        assessment_payload["docx_page_count"] = int(docx_quality.get("docx_page_count", 0))
         assessment_payload["docx_remaining_issues"] = list(
             cast(list[object], docx_quality.get("issues", []))
         ) if isinstance(docx_quality.get("issues", []), list) else []
+        assessment_payload["pdf_docx_shared_canonical_content"] = True
+        assessment_payload["canonical_markdown_source"] = "stage-24/paper_repaired.md"
+        assessment_payload["canonical_markdown_compressed_for_page_limit"] = (
+            canonical_markdown_compressed_for_page_limit
+        )
+        assessment_payload["canonical_page_compression_rounds"] = (
+            canonical_page_compression_rounds
+        )
         assessment_payload["docx_used_citeproc"] = bool(_pandoc_docx_citeproc_args(which("pandoc") or ""))
         assessment_path.write_text(
             json.dumps(assessment_payload, indent=2, ensure_ascii=False),
@@ -2370,8 +4726,12 @@ def _execute_final_editorial_repair(
 
     return StageResult(
         stage=Stage.FINAL_EDITORIAL_REPAIR,
-        status=StageStatus.DONE if loop_result.success else StageStatus.FAILED,
+        status=StageStatus.DONE
+        if loop_result.success and not docx_quality_payload["issues"]
+        else StageStatus.FAILED,
         artifacts=tuple(artifacts),
         evidence_refs=tuple(evidence_refs),
-        error=None if loop_result.success else loop_result.error,
+        error=None
+        if loop_result.success and not docx_quality_payload["issues"]
+        else (loop_result.error or "; ".join(str(issue) for issue in docx_quality_payload["issues"])),
     )

@@ -57,6 +57,7 @@ def markdown_to_latex(
     authors: str = "Anonymous",
     bib_file: str = "references",
     bib_entries: dict[str, str] | None = None,
+    submission_profile: str = "default",
 ) -> str:
     """Convert a Markdown paper to a complete LaTeX document.
 
@@ -96,9 +97,12 @@ def markdown_to_latex(
     # Extract abstract
     abstract = _extract_abstract(sections)
     abstract, abstract_post_blocks = _detach_abstract_media_blocks(abstract)
+    abstract, keywords_block = _extract_keywords_block(abstract)
 
     # Build body (everything except title/abstract headings)
     body = _build_body(sections, title=title)
+    if keywords_block:
+        body = keywords_block + "\n\n" + body
     if abstract_post_blocks:
         body = _convert_block(abstract_post_blocks) + "\n\n" + body
 
@@ -106,7 +110,10 @@ def markdown_to_latex(
     body = _deduplicate_tables(body)
 
     # R10-Fix5: Completeness check
-    completeness_warnings = check_paper_completeness(sections)
+    completeness_warnings = check_paper_completeness(
+        sections,
+        submission_profile=submission_profile,
+    )
     if completeness_warnings:
         import logging
 
@@ -126,6 +133,7 @@ def markdown_to_latex(
 
     # Final sanitization pass on the complete LaTeX output
     tex = _sanitize_latex_output(tex, bib_entries=bib_entries)
+    tex = _strip_unused_algorithm_packages(tex)
 
     return tex
 
@@ -284,6 +292,14 @@ def _sanitize_latex_output(
     tex = re.sub(r"\n{3,}", "\n\n", tex)
 
     return tex
+
+
+def _strip_unused_algorithm_packages(tex: str) -> str:
+    if re.search(r"\\begin\{algorithm\}|\\begin\{algorithmic\}", tex):
+        return tex
+    tex = re.sub(r"(?m)^\\usepackage\{algorithm\}\n?", "", tex)
+    tex = re.sub(r"(?m)^\\usepackage\{algorithmic\}\n?", "", tex)
+    return re.sub(r"\n{3,}", "\n\n", tex)
 
 
 # ---------------------------------------------------------------------------
@@ -955,11 +971,18 @@ _BOLD_TABLE_CAPTION_RE = re.compile(
 _ITALIC_TABLE_CAPTION_RE = re.compile(
     r"^\*\s*Table\s+\d+[.:]?\s*(?P<body>.*?)\*\s*$"
 )
+_PLAIN_TABLE_CAPTION_RE = re.compile(
+    r"^Table\s+\d+[.:]?\s*(?P<body>.*?)\s*$"
+)
 _LATEX_BOLD_TABLE_CAPTION_RE = re.compile(
     r"^\\textbf\{\s*Table\s+\d+[.:]?\s*(?P<body>.*?)\}\s*$"
 )
 _LATEX_ITALIC_TABLE_CAPTION_RE = re.compile(
     r"^\\textit\{\s*Table\s+\d+[.:]?\s*(?P<body>.*?)\}\s*$"
+)
+_KEYWORDS_BLOCK_RE = re.compile(
+    r"^\*\*Keywords:\*\*\s*(?P<body>.+?)\s*$",
+    re.IGNORECASE,
 )
 
 # Bullet / numbered list patterns
@@ -986,6 +1009,7 @@ def _match_table_caption_block(text: str) -> re.Match[str] | None:
     return (
         _BOLD_TABLE_CAPTION_RE.match(stripped)
         or _ITALIC_TABLE_CAPTION_RE.match(stripped)
+        or _PLAIN_TABLE_CAPTION_RE.match(stripped)
         or _LATEX_BOLD_TABLE_CAPTION_RE.match(stripped)
         or _LATEX_ITALIC_TABLE_CAPTION_RE.match(stripped)
     )
@@ -995,6 +1019,11 @@ def _join_markdown_blocks(blocks: list[str]) -> str:
     if not blocks:
         return ""
     return "\n\n".join(block.rstrip() for block in blocks if block.strip())
+
+
+def _keyword_block_score(keywords_text: str) -> tuple[int, int]:
+    terms = [term.strip() for term in keywords_text.split(",") if term.strip()]
+    return (len(terms), len(keywords_text.strip()))
 
 
 def _detach_abstract_media_blocks(abstract: str) -> tuple[str, str]:
@@ -1027,6 +1056,30 @@ def _detach_abstract_media_blocks(abstract: str) -> tuple[str, str]:
         i += 1
 
     return _join_markdown_blocks(kept), _join_markdown_blocks(moved)
+
+
+def _extract_keywords_block(abstract: str) -> tuple[str, str]:
+    blocks = _split_markdown_blocks(abstract)
+    if not blocks:
+        return abstract, ""
+
+    kept: list[str] = []
+    keyword_candidates: list[str] = []
+    for block in blocks:
+        match = _KEYWORDS_BLOCK_RE.match(block.strip())
+        if match:
+            keyword_candidates.append(match.group("body").strip())
+            continue
+        kept.append(block)
+
+    if not keyword_candidates:
+        return abstract, ""
+    keywords_text = max(keyword_candidates, key=_keyword_block_score)
+
+    return (
+        _join_markdown_blocks(kept),
+        r"\noindent\textbf{Keywords:} " + _convert_inline(keywords_text),
+    )
 
 
 def _convert_block(text: str) -> str:
@@ -1750,7 +1803,11 @@ _SECTION_ALIASES: dict[str, str] = {
 }
 
 
-def check_paper_completeness(sections: list[_Section]) -> list[str]:
+def check_paper_completeness(
+    sections: list[_Section],
+    *,
+    submission_profile: str = "default",
+) -> list[str]:
     """Check whether a paper contains all expected sections.
 
     Returns a list of warning strings.  Empty list means the paper
@@ -1786,7 +1843,12 @@ def check_paper_completeness(sections: list[_Section]) -> list[str]:
                         found_sections.add(expected)
                         break
 
-    missing = _EXPECTED_SECTIONS - found_sections
+    expected_sections = set(_EXPECTED_SECTIONS)
+    if submission_profile == "ei_conference":
+        expected_sections.discard("related work")
+        expected_sections.discard("discussion")
+
+    missing = expected_sections - found_sections
     if missing:
         warnings.append(
             f"Missing sections: {', '.join(sorted(missing))}. "
@@ -1794,7 +1856,7 @@ def check_paper_completeness(sections: list[_Section]) -> list[str]:
         )
 
     # T2.5: Check for required conference sections (NeurIPS/ICLR mandate Limitations)
-    _required_extras = {"limitations"}
+    _required_extras = {"limitations"} if submission_profile != "ei_conference" else set()
     _extra_aliases = {
         "limitation": "limitations",
         "limitations and future work": "limitations",
@@ -1868,11 +1930,20 @@ def check_paper_completeness(sections: list[_Section]) -> list[str]:
             f"Content may be severely truncated."
         )
 
+    def _aggregate_section_body(idx: int) -> str:
+        sec = sections[idx]
+        parts = [sec.body] if sec.body else []
+        for follower in sections[idx + 1 :]:
+            if follower.level <= sec.level:
+                break
+            if follower.body:
+                parts.append(follower.body)
+        return "\n\n".join(part for part in parts if part).strip()
 
     # Per-section word count check (safety net during LaTeX conversion)
     from researchclaw.prompts import SECTION_WORD_TARGETS, _SECTION_TARGET_ALIASES
 
-    for sec in sections:
+    for idx, sec in enumerate(sections):
         if sec.level not in (1, 2) or not sec.heading:
             continue
         canon = sec.heading_lower
@@ -1881,7 +1952,8 @@ def check_paper_completeness(sections: list[_Section]) -> list[str]:
         if not canon or canon not in SECTION_WORD_TARGETS:
             continue
         lo, hi = SECTION_WORD_TARGETS[canon]
-        wc = len(sec.body.split())
+        section_body = _aggregate_section_body(idx)
+        wc = len(section_body.split())
         if wc < int(lo * 0.6):
             warnings.append(
                 f"Section '{sec.heading}' is only {wc} words "
@@ -1897,20 +1969,21 @@ def check_paper_completeness(sections: list[_Section]) -> list[str]:
     _bullet_re_cc = re.compile(r"^\s*[-*]\s+", re.MULTILINE)
     _numbered_re_cc = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
     _bullet_ok_sections = {"introduction", "limitations", "limitation", "abstract"}
-    for sec in sections:
+    for idx, sec in enumerate(sections):
         if sec.level not in (1, 2) or not sec.heading:
             continue
         hl = sec.heading_lower
         if hl in _bullet_ok_sections:
             continue
-        if not sec.body:
+        section_body = _aggregate_section_body(idx)
+        if not section_body:
             continue
-        total_lines = len([ln for ln in sec.body.splitlines() if ln.strip()])
+        total_lines = len([ln for ln in section_body.splitlines() if ln.strip()])
         if total_lines < 4:
             continue
         bullet_count = (
-            len(_bullet_re_cc.findall(sec.body))
-            + len(_numbered_re_cc.findall(sec.body))
+            len(_bullet_re_cc.findall(section_body))
+            + len(_numbered_re_cc.findall(section_body))
         )
         density = bullet_count / total_lines
         if density > 0.30:

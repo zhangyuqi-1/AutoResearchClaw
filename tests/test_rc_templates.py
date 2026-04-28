@@ -599,6 +599,43 @@ class TestMarkdownToLatex:
         assert r"\(f(x)\)" in tex
         assert r"\[E = mc^2\]" in tex
 
+    def test_keywords_block_renders_after_abstract(self) -> None:
+        tex = markdown_to_latex(
+            (
+                "# Title\n"
+                "**My Great Paper**\n\n"
+                "# Abstract\n"
+                "Abstract paragraph.\n\n"
+                "**Keywords:** vulnerability detection, graph learning, software security\n\n"
+                "# Introduction\n"
+                "Intro text.\n"
+            ),
+            NEURIPS_2024,
+        )
+
+        post_abstract = tex.split(r"\end{abstract}", 1)[1]
+        assert r"\textbf{Keywords:} vulnerability detection, graph learning, software security" in post_abstract
+        assert post_abstract.index(r"\textbf{Keywords:}") < post_abstract.index(r"\section{Introduction}")
+
+    def test_duplicate_keywords_blocks_are_deduplicated(self) -> None:
+        tex = markdown_to_latex(
+            (
+                "# Title\n"
+                "**My Great Paper**\n\n"
+                "# Abstract\n"
+                "Abstract paragraph.\n\n"
+                "**Keywords:** imbalanced classification, tabular learning, feature selection\n\n"
+                "**Keywords:** explainable, feature, selection\n\n"
+                "# Introduction\n"
+                "Intro text.\n"
+            ),
+            NEURIPS_2024,
+        )
+
+        assert tex.count(r"\textbf{Keywords:}") == 1
+        assert r"\textbf{Keywords:} imbalanced classification, tabular learning, feature selection" in tex
+        assert "explainable, feature, selection" not in tex
+
     def test_inline_math_subscripts_are_not_escaped(self) -> None:
         tex = markdown_to_latex(
             (
@@ -879,6 +916,54 @@ class TestCompletenessWordCountAndBullets:
         warns = check_paper_completeness(secs)
         bullet_warns = [w for w in warns if "bullet" in w.lower() and "Method" in w]
         assert len(bullet_warns) >= 1, f"Expected bullet warning, got: {warns}"
+
+    def test_completeness_ei_profile_does_not_require_related_work_or_limitations(self) -> None:
+        secs = self._make_sections([
+            ("A Practical EI Paper", 6, False),
+            ("Abstract", 190, False),
+            ("Introduction", 900, False),
+            ("Method", 1100, False),
+            ("Experiments", 950, False),
+            ("Results and Analysis", 720, False),
+            ("Conclusion", 260, False),
+        ])
+
+        warns = check_paper_completeness(secs, submission_profile="ei_conference")
+
+        assert not any("Missing sections:" in w and "related work" in w.lower() for w in warns)
+        assert not any("Missing required sections for NeurIPS/ICLR" in w for w in warns)
+
+    def test_completeness_counts_subsections_inside_main_sections(self) -> None:
+        def section(level: int, heading: str, words: int):
+            return type("_Section", (), {
+                "level": level,
+                "heading": heading,
+                "heading_lower": heading.lower(),
+                "body": " ".join(["word"] * words),
+            })()
+
+        secs = [
+            section(1, "A Practical EI Paper", 6),
+            section(2, "Abstract", 190),
+            section(2, "Introduction", 900),
+            section(2, "Method", 0),
+            section(3, "Problem Formulation", 420),
+            section(3, "Stability-Aware Ranking", 420),
+            section(3, "Compact Ensemble Construction", 420),
+            section(2, "Experiments", 0),
+            section(3, "Benchmark Setup", 520),
+            section(3, "Metric and Reporting Protocol", 520),
+            section(2, "Results and Analysis", 0),
+            section(3, "Predictive Performance", 400),
+            section(3, "Dataset-Level Behavior", 360),
+            section(2, "Conclusion", 260),
+        ]
+
+        warns = check_paper_completeness(secs, submission_profile="ei_conference")
+
+        assert not any("Section 'Method' is only 0 words" in w for w in warns)
+        assert not any("Section 'Experiments' is only 0 words" in w for w in warns)
+        assert not any("Section 'Results and Analysis' is only 0 words" in w for w in warns)
 
 
 # =====================================================================

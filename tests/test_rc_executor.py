@@ -1067,8 +1067,9 @@ class TestExportPublishCodePackage:
             authors: str = "",
             bib_file: str = "",
             bib_entries: dict[str, str] | None = None,
+            submission_profile: str = "default",
         ) -> str:
-            _ = tpl, title, authors, bib_file, bib_entries
+            _ = tpl, title, authors, bib_file, bib_entries, submission_profile
             lines = [r"\documentclass{article}", r"\usepackage{graphicx}", r"\begin{document}"]
             for match in re.finditer(r"!\[[^\]]*\]\((charts/[^)]+)\)", text):
                 lines.append(r"\begin{figure}")
@@ -1349,8 +1350,9 @@ class TestExportPublishCodePackage:
             authors: str = "",
             bib_file: str = "",
             bib_entries: dict[str, str] | None = None,
+            submission_profile: str = "default",
         ) -> str:
-            _ = tpl, title, authors, bib_file, bib_entries
+            _ = tpl, title, authors, bib_file, bib_entries, submission_profile
             captured_markdown["text"] = text
             return "\n".join(
                 [
@@ -1920,8 +1922,9 @@ class TestStage24EditorialRepair:
             authors: str = "",
             bib_file: str = "",
             bib_entries: dict[str, str] | None = None,
+            submission_profile: str = "default",
         ) -> str:
-            _ = tpl, title, authors, bib_file, bib_entries
+            _ = tpl, title, authors, bib_file, bib_entries, submission_profile
             return "\n".join(
                 [
                     r"\documentclass{article}",
@@ -2063,8 +2066,8 @@ class TestStage24EditorialRepair:
 
         assert "charts/pipeline_overview_2.png" not in intro
         assert "charts/pipeline_overview_2.png" in setup
-        assert "The end-to-end evaluation protocol is summarized visually below." in setup
-        assert "The figure below compares PACT against the strongest baselines on F1." in results
+        assert "Figure 1 summarizes evaluation pipeline." in setup
+        assert "Figure 2 summarizes main F1 comparison across methods." in results
         assert called["stage_dir"] == stage_dir
         assert called["run_dir"] == run_dir
         assert (stage_dir / "paper_editorial_input.md").exists()
@@ -2143,6 +2146,7 @@ class TestStage24EditorialRepair:
             "## Abstract\n\n"
             "Abstract first paragraph.\n\n"
             "Abstract second paragraph.\n\n"
+            "**Keywords:** vulnerability detection, graph learning, software security\n\n"
             "## Introduction\n\n"
             "Intro text with [smith2024, doe2023].\n\n"
             "### Method\n\n"
@@ -2169,7 +2173,10 @@ class TestStage24EditorialRepair:
         assert "![](charts/fig.png)" in prepared
         assert 'custom-style="ImageCaption"' in prepared
         assert 'custom-style="TableCaption"' in prepared
-        assert "<sup>[1, 2]</sup>" in prepared
+        assert "[1, 2]" in prepared
+        assert "<sup>" not in prepared
+        assert 'custom-style="Keywords"' in prepared
+        assert "Keywords: vulnerability detection, graph learning, software security" in prepared
         assert "# References" in prepared
         assert "[1] Smith, Jane." in prepared
         assert 'custom-style="TableCaption"}\nTable 1 summarizes' not in prepared
@@ -2214,6 +2221,1029 @@ class TestStage24EditorialRepair:
         assert "• First limitation." in prepared
         assert "• Second limitation." in prepared
 
+    def test_stage24_normalize_final_markdown_adds_keywords_after_abstract(self) -> None:
+        markdown = (
+            "# Test Title\n\n"
+            "## Abstract\n\n"
+            "We study vulnerability detection with graph-guided fusion.\n\n"
+            "## Introduction\n\n"
+            "Intro.\n"
+        )
+
+        normalized = stage24_mod._normalize_final_paper_markdown(
+            markdown,
+            topic="Graph-guided vulnerability detection for software security",
+            domains=("ml", "security"),
+            submission_profile="default",
+        )
+
+        assert "**Keywords:**" in normalized
+        assert "graph-guided" in normalized.lower()
+        assert "software" in normalized.lower()
+        assert "security" in normalized.lower()
+        assert normalized.index("**Keywords:**") < normalized.index("## Introduction")
+
+    def test_stage24_normalize_final_markdown_deduplicates_keywords(self) -> None:
+        markdown = (
+            "# Test Title\n\n"
+            "## Abstract\n\n"
+            "We study imbalanced tabular classification.\n\n"
+            "**Keywords:** imbalanced classification, tabular learning, feature selection, ensemble learning, explainable AI, robustness analysis, benchmark comparison\n\n"
+            "**Keywords:** explainable, feature, selection, ensemble, learning\n\n"
+            "## Introduction\n\n"
+            "Intro.\n"
+        )
+
+        normalized = stage24_mod._normalize_final_paper_markdown(
+            markdown,
+            topic="Explainable feature selection for imbalanced tabular classification",
+            domains=("ml",),
+            submission_profile="default",
+        )
+
+        assert normalized.count("**Keywords:**") == 1
+        assert "imbalanced classification, tabular learning" in normalized
+        assert "Keywords:** explainable, feature, selection" not in normalized
+
+    def test_stage24_normalize_final_markdown_applies_ei_structure_profile(self) -> None:
+        markdown = (
+            "# Test Title\n\n"
+            "## Abstract\n\n"
+            "Abstract.\n\n"
+            "## Introduction\n\n"
+            "Intro.\n\n"
+            "## Related Work\n\n"
+            "Prior work.\n\n"
+            "## Method\n\n"
+            "Method.\n\n"
+            "## Results\n\n"
+            "Results.\n\n"
+            "## Discussion\n\n"
+            "Discussion.\n\n"
+            "## Limitations\n\n"
+            "Limits.\n\n"
+            "## Conclusion\n\n"
+            "Conclusion.\n"
+        )
+
+        normalized = stage24_mod._normalize_final_paper_markdown(
+            markdown,
+            topic="EI-ready vulnerability detection",
+            domains=("security",),
+            submission_profile="ei_conference",
+        )
+
+        assert "## Related Work" not in normalized
+        assert "## Results and Analysis" in normalized
+        assert "## Discussion" not in normalized
+        assert "## Limitations" not in normalized
+        assert "Prior work." in normalized
+        assert "Discussion." in normalized
+        assert "Limits." in normalized
+
+    def test_stage24_normalize_final_markdown_repairs_display_equation_flow(self) -> None:
+        markdown = (
+            "# Test Title\n\n"
+            "## Method\n\n"
+            "The vulnerability classifier maps the fused feature to a probability,\n\n"
+            "y_i = \\sigma(w_c^\\top \\mathrm{LN}(W_c z_i + b_c)).\n\n"
+            "Training minimizes binary cross-entropy over vulnerability labels,\n\n"
+            "\\mathcal{L}_{vul} = - \\sum_i y_i \\log y_i.\n"
+        )
+
+        normalized = stage24_mod._normalize_final_paper_markdown(
+            markdown,
+            topic="Graph-guided vulnerability detection for software security",
+            domains=("ml", "security"),
+            submission_profile="default",
+        )
+
+        assert "Equation (" not in normalized
+        assert "The vulnerability classifier maps the fused feature to a probability:" in normalized
+        assert "Training minimizes binary cross-entropy over vulnerability labels:" in normalized
+        assert "$$\ny_i = \\sigma(w_c^\\top \\mathrm{LN}(W_c z_i + b_c))\n$$" in normalized
+        assert "$$\n\\mathcal{L}_{vul} = - \\sum_i y_i \\log y_i\n$$" in normalized
+        assert "Here, $y_i$" in normalized
+        assert "$w_c$" in normalized
+        assert "$W_c$" in normalized
+        assert "$b_c$" in normalized
+
+    def test_stage24_normalize_final_markdown_keeps_natural_equation_prose(self) -> None:
+        markdown = (
+            "# Test Title\n\n"
+            "## Method\n\n"
+            "The hidden representation is normalized before classification.\n\n"
+            "$$\n"
+            "h_i^{(s)} = \\mathrm{LN}(W_s h_i^{(s)} + b_s)\n"
+            "$$\n\n"
+            "Here, $h_i^{(s)}$ denotes the representation and $W_s$ and $b_s$ are learned parameters.\n\n"
+            "The class probability is then computed as follows.\n\n"
+            "$$\n"
+            "p(y=1 \\mid x_i) = \\sigma(w^\\top h_i^{(s)})\n"
+            "$$\n"
+        )
+
+        normalized = stage24_mod._normalize_final_paper_markdown(
+            markdown,
+            topic="Explainable feature selection for imbalanced tabular classification",
+            domains=("ml",),
+            submission_profile="default",
+        )
+
+        assert "Equation (" not in normalized
+        assert "The hidden representation is normalized before classification." in normalized
+        assert "The class probability is then computed as follows." in normalized
+        assert "Here, $h_i^{(s)}$ denotes the representation and $W_s$ and $b_s$ are learned parameters." in normalized
+        assert "$$\nh_i^{(s)} = \\mathrm{LN}(W_s h_i^{(s)} + b_s)\n$$" in normalized
+
+    def test_stage24_normalize_final_markdown_rewrites_stale_equation_references_to_natural_prose(
+        self,
+    ) -> None:
+        markdown = (
+            "# Test Title\n\n"
+            "## Method\n\n"
+            "The hidden representation is defined in Equation (8):\n\n"
+            "$$\n"
+            "h_i^{(s)} = \\mathrm{LN}(W_s h_i^{(s)} + b_s)\n"
+            "$$\n\n"
+            "In Equation (8), $h_i^{(s)}$ denotes the representation and $W_s$ and $b_s$ are learned parameters.\n"
+        )
+
+        normalized = stage24_mod._normalize_final_paper_markdown(
+            markdown,
+            topic="Explainable feature selection for imbalanced tabular classification",
+            domains=("ml",),
+            submission_profile="default",
+        )
+
+        assert "Equation (8)" not in normalized
+        assert "Equation (1)" not in normalized
+        assert "The hidden representation is defined:" in normalized
+        assert "Here, $h_i^{(s)}$ denotes the representation and $W_s$ and $b_s$ are learned parameters." in normalized
+
+    def test_stage24_normalize_final_markdown_restores_missing_figure_caption_and_reference(
+        self,
+    ) -> None:
+        current_markdown = (
+            "# Test Title\n\n"
+            "## Results and Analysis\n\n"
+            "The ablation plot below shows the selector ordering.\n\n"
+            "![Selector ablation comparing embedded top-k, PRSM, PSIR, SHDW, and MBDS variants.](charts/fig_ablation_selector_variants.png)\n"
+        )
+        prior_markdown = (
+            "# Test Title\n\n"
+            "## Results and Analysis\n\n"
+            "As shown in Figure 5, adding robustness-oriented or disagreement-oriented structure "
+            "does not automatically improve predictive F1.\n\n"
+            "![Selector ablation comparing embedded top-k, PRSM, PSIR, SHDW, and MBDS variants.](charts/fig_ablation_selector_variants.png)\n\n"
+            "Figure 5. Selector-family comparison across embedded top-k ranking, PRISM stability-filtered "
+            "correlation pruning, prior-shift ranking, shadow-twin redundancy adjudication, and minority-boundary disagreement selection.\n"
+        )
+
+        normalized = stage24_mod._normalize_final_paper_markdown(
+            current_markdown,
+            topic="Explainable feature selection for imbalanced tabular classification",
+            domains=("ml",),
+            submission_profile="default",
+            table_caption_sources=(prior_markdown,),
+            figure_reference_sources=(prior_markdown,),
+        )
+
+        assert "As shown in Figure 5" in normalized
+        assert "Figure 5. Selector-family comparison" in normalized
+
+    def test_stage24_normalize_final_markdown_rewrites_equation_prose_to_natural_style(
+        self,
+    ) -> None:
+        markdown = (
+            "# T\n\n"
+            "## Method\n\n"
+            "The ensemble prediction is computed as follows in Equation (8):\n\n"
+            "$$\n"
+            "p(y=1 \\mid x) = \\sum_{m=1}^{M} w_m p_m(y=1 \\mid x_{S_m})\n"
+            "$$\n\n"
+            "In Equation (8), $M$ is the number of compact feature views and $w_m$ is its ensemble weight.\n"
+        )
+
+        normalized = stage24_mod._normalize_final_paper_markdown(
+            markdown,
+            topic="Explainable feature selection for imbalanced tabular classification",
+            domains=("ml",),
+            submission_profile="default",
+        )
+
+        assert "The ensemble prediction is computed as follows:" in normalized
+        assert "Equation (8)" not in normalized
+        assert "Here, $M$ is the number of compact feature views and $w_m$ is its ensemble weight." in normalized
+
+    def test_stage24_normalize_final_markdown_restores_missing_table_captions_from_prior_source(
+        self,
+    ) -> None:
+        current_markdown = (
+            "# Test Title\n\n"
+            "## Experiments\n\n"
+            "The evaluated conditions are summarized below.\n\n"
+            "| Abbr. | Condition |\n"
+            "|---|---|\n"
+            "| CATB | baseline |\n"
+        )
+        prior_markdown = (
+            "# Test Title\n\n"
+            "## Experiments\n\n"
+            "The evaluated conditions are summarized below.\n\n"
+            "Table 1. Summary of evaluation datasets.\n\n"
+            "| Abbr. | Condition |\n"
+            "|---|---|\n"
+            "| CATB | baseline |\n"
+        )
+
+        normalized = stage24_mod._normalize_final_paper_markdown(
+            current_markdown,
+            topic="Explainable feature selection for imbalanced tabular classification",
+            domains=("ml",),
+            submission_profile="default",
+            table_caption_sources=(prior_markdown,),
+        )
+
+        assert "Table 1. Summary of evaluation datasets." in normalized
+
+    def test_stage24_prepare_docx_markdown_preserves_display_equation_and_explanation(
+        self,
+    ) -> None:
+        markdown = (
+            "# Title\n\n"
+            "## Method\n\n"
+            "Lead-in sentence:\n\n"
+            "$$\n"
+            "y_i = \\sigma(w_c^\\top \\mathrm{LN}(W_c z_i + b_c))\n"
+            "$$\n\n"
+            "Here, $y_i$ denotes the predicted probability, $z_i$ denotes the fused representation, "
+            "and $W_c$ and $b_c$ are learnable parameters.\n"
+        )
+
+        prepared = stage24_mod._prepare_docx_markdown(
+            markdown,
+            authors="Anonymous",
+            bibliography_name="references.bib",
+        )
+
+        assert "$$\ny_i = \\sigma(w_c^\\top \\mathrm{LN}(W_c z_i + b_c))\n$$" in prepared
+        assert "Here, $y_i$ denotes the predicted probability" in prepared
+
+    def test_stage24_prepare_docx_markdown_promotes_multiline_display_equations_to_aligned_blocks(
+        self,
+    ) -> None:
+        markdown = (
+            "# Title\n\n"
+            "## Method\n\n"
+            "Objective definition:\n\n"
+            "$$\n"
+            "\\max_{\\mathcal{S},\\Theta,w} \\; \\mathcal{J}\n"
+            "=\n"
+            "\\operatorname{Perf}(\\mathcal{S},\\Theta,w)\n"
+            "-\n"
+            "\\lambda_{\\mathrm{stab}} \\Omega_{\\mathrm{stab}}(\\mathcal{S})\n"
+            "-\n"
+            "\\lambda_{\\mathrm{red}} \\Omega_{\\mathrm{red}}(\\mathcal{S})\n"
+            "$$\n"
+        )
+
+        prepared = stage24_mod._prepare_docx_markdown(
+            markdown,
+            authors="Anonymous",
+            bibliography_name="references.bib",
+        )
+
+        assert "\\begin{aligned}" in prepared
+        assert "\\max_{\\mathcal{S},\\Theta,w} \\; \\mathcal{J}" in prepared
+        assert "&= \\operatorname{Perf}(\\mathcal{S},\\Theta,w)" in prepared
+        assert "&\\quad - \\lambda_{\\mathrm{stab}} \\Omega_{\\mathrm{stab}}(\\mathcal{S})" in prepared
+        assert "&\\quad - \\lambda_{\\mathrm{red}} \\Omega_{\\mathrm{red}}(\\mathcal{S})" in prepared
+
+    def test_stage24_prepare_docx_markdown_keeps_short_display_equations_single_line(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        markdown = (
+            "# Title\n\n"
+            "## Method\n\n"
+            "Class imbalance enters training through a class-weighted empirical loss.\n\n"
+            "$$\n"
+            "\\mathcal{L}_{\\mathrm{cw}}(\\theta) = \\sum_{i=1}^{n}\n"
+            "\\alpha_{y_i}\n"
+            "\\ell(y_i, f_{\\theta}(x_i))\n"
+            "$$\n"
+        )
+
+        prepared = stage24_mod._prepare_docx_markdown(
+            markdown,
+            authors="Anonymous",
+            bibliography_name="references.bib",
+        )
+
+        assert "\\begin{aligned}" not in prepared
+        assert (
+            "$$\n"
+            "\\mathcal{L}_{\\mathrm{cw}}(\\theta) = \\sum_{i=1}^{n} "
+            "\\alpha_{y_i} \\ell(y_i, f_{\\theta}(x_i))\n"
+            "$$"
+        ) in prepared
+
+        pandoc_bin = stage24_mod.which("pandoc")
+        if not pandoc_bin:
+            pytest.skip("pandoc not installed")
+        md_path = tmp_path / "paper.md"
+        docx_path = tmp_path / "paper.docx"
+        md_path.write_text(prepared, encoding="utf-8")
+        result = stage24_mod.subprocess.run(
+            [
+                pandoc_bin,
+                str(md_path),
+                "--standalone",
+                "--from",
+                "markdown+tex_math_dollars+tex_math_single_backslash",
+                "--to",
+                "docx",
+                "--output",
+                str(docx_path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        assert result.returncode == 0
+        with ZipFile(docx_path) as zf:
+            document_xml = zf.read("word/document.xml").decode("utf-8")
+        assert "m:oMath" in document_xml
+        assert "$$" not in document_xml
+        assert "\\begin{aligned}" not in document_xml
+
+    def test_stage24_prepare_docx_markdown_keeps_multiline_equations_valid_for_docx_export(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        markdown = (
+            "# Title\n\n"
+            "## Experiments\n\n"
+            "The standard deviation is defined as follows in Equation (14):\n\n"
+            "$$\n"
+            "\\sigma_{F_1} =\n"
+            "\\sqrt{\n"
+            "\\frac{1}{S-1}\n"
+            "\\sum_{s=1}^{S}\n"
+            "\\left(F_1^{(s)}-\\bar{F}_1\\right)^2\n"
+            "}\n"
+            "$$\n"
+        )
+
+        prepared = stage24_mod._prepare_docx_markdown(
+            markdown,
+            authors="Anonymous",
+            bibliography_name="references.bib",
+        )
+
+        assert "\\sum_{s &= 1}^{S}" not in prepared
+        assert "\\sum_{s=1}^{S}" in prepared
+
+        pandoc_bin = stage24_mod.which("pandoc")
+        if not pandoc_bin:
+            pytest.skip("pandoc not installed")
+        md_path = tmp_path / "paper.md"
+        docx_path = tmp_path / "paper.docx"
+        md_path.write_text(prepared, encoding="utf-8")
+        result = stage24_mod.subprocess.run(
+            [
+                pandoc_bin,
+                str(md_path),
+                "--standalone",
+                "--from",
+                "markdown+tex_math_dollars+tex_math_single_backslash",
+                "--to",
+                "docx",
+                "--output",
+                str(docx_path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        assert result.returncode == 0
+        with ZipFile(docx_path) as zf:
+            document_xml = zf.read("word/document.xml").decode("utf-8")
+        assert "m:oMath" in document_xml
+        assert "$$" not in document_xml
+        assert "\\begin{aligned}" not in document_xml
+
+    def test_stage24_prepare_docx_markdown_deduplicates_keywords(self) -> None:
+        markdown = (
+            "# Title\n\n"
+            "## Abstract\n\n"
+            "Abstract text.\n\n"
+            "**Keywords:** imbalanced classification, tabular learning, feature selection\n\n"
+            "**Keywords:** explainable, feature, selection\n\n"
+            "## Introduction\n\n"
+            "Intro.\n"
+        )
+
+        prepared = stage24_mod._prepare_docx_markdown(
+            markdown,
+            authors="Anonymous",
+            bibliography_name="references.bib",
+        )
+
+        assert prepared.count('custom-style="Keywords"') == 1
+        assert "Keywords: imbalanced classification, tabular learning, feature selection" in prepared
+        assert "Keywords: explainable, feature, selection" not in prepared
+
+    def test_stage24_enforce_reference_limit_prunes_excess_citations(self) -> None:
+        markdown = (
+            "# Title\n\n"
+            "## Introduction\n\n"
+            "Overview [smith2024, doe2023].\n\n"
+            "Additional context [lee2022].\n\n"
+            "Revisit the first result [smith2024].\n"
+        )
+
+        limited = stage24_mod._enforce_reference_limit(markdown, max_references=2)
+
+        assert "[smith2024, doe2023]" in limited
+        assert "[lee2022]" not in limited
+        assert limited.count("smith2024") == 2
+
+    def test_stage24_enforce_reference_limit_preserves_markdown_structure(self) -> None:
+        markdown = (
+            "# Title\n\n"
+            "## Abstract\n\n"
+            "Summary [smith2024].\n\n"
+            "## Introduction\n\n"
+            "Lead paragraph [doe2023].\n\n"
+            "## Method\n\n"
+            "| ColA | ColB |\n"
+            "| --- | --- |\n"
+            "| 1 | 2 |\n\n"
+            "![Chart](charts/fig_main.png)\n\n"
+            "Method detail [lee2022].\n"
+        )
+
+        limited = stage24_mod._enforce_reference_limit(markdown, max_references=2)
+
+        assert "# Title\n\n## Abstract" in limited
+        assert "## Introduction\n\nLead paragraph [doe2023]." in limited
+        assert "## Method\n\n| ColA | ColB |" in limited
+        assert "![Chart](charts/fig_main.png)" in limited
+        assert "[lee2022]" not in limited
+        assert "\n\n" in limited
+
+    def test_stage24_rejects_unbalanced_code_fence_markdown(self) -> None:
+        original = (
+            "# Test Paper\n\n"
+            "## Abstract\n\n"
+            "Summary.\n\n"
+            "## Introduction\n\n"
+            "Intro.\n\n"
+            "## Method\n\n"
+            "Method text.\n\n"
+            "## Experiments\n\n"
+            "Experiment text.\n\n"
+            "## Results and Analysis\n\n"
+            "Result text.\n\n"
+            "## Conclusion\n\n"
+            "Conclusion.\n"
+        )
+        candidate = (
+            "# Test Paper\n\n"
+            "## Abstract\n\n"
+            "Summary.\n\n"
+            "## Introduction\n\n"
+            "Intro.\n\n"
+            "## Method\n\n"
+            "```text\n"
+            "Algorithm 1\n\n"
+            "## Experiments\n\n"
+            "This heading has been swallowed by an unclosed code block.\n"
+        )
+
+        assert stage24_mod._markdown_integrity_issues(candidate, baseline=original)
+        assert not stage24_mod._preserves_required_structure(original, candidate)
+
+    def test_stage24_compress_markdown_for_docx_limit_prefers_low_priority_sections(self) -> None:
+        conclusion = " ".join(["Conclusion sentence."] * 80)
+        intro = " ".join(["Introduction sentence."] * 40)
+        markdown = (
+            "# Title\n\n"
+            "## Introduction\n\n"
+            f"{intro}\n\n"
+            "## Conclusion\n\n"
+            f"{conclusion}\n"
+        )
+
+        compressed = stage24_mod._compress_markdown_for_docx_limit(
+            markdown,
+            current_page_count=14,
+            page_limit=10,
+            submission_profile="default",
+        )
+
+        assert compressed.count("Conclusion sentence.") < markdown.count("Conclusion sentence.")
+        assert compressed.count("Introduction sentence.") == markdown.count("Introduction sentence.")
+
+    def test_stage24_recompresses_markdown_when_docx_page_limit_exceeded(
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        rc_config: RCConfig,
+        adapters: AdapterBundle,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._stub_editorial_pipeline(monkeypatch)
+        stage22 = run_dir / "stage-22"
+        stage22.mkdir(parents=True, exist_ok=True)
+        (stage22 / "paper_final.md").write_text("# Test Paper\n\n## Conclusion\n\nBody.\n", encoding="utf-8")
+        stage23 = run_dir / "stage-23"
+        stage23.mkdir(parents=True, exist_ok=True)
+        (stage23 / "paper_final_verified.md").write_text("# Test Paper\n\n## Conclusion\n\nBody.\n", encoding="utf-8")
+
+        verbose_conclusion = " ".join(["Conclusion sentence."] * 120)
+        config = RCConfig.from_dict(
+            {
+                "project": {"name": rc_config.project.name, "mode": rc_config.project.mode},
+                "research": {
+                    "topic": rc_config.research.topic,
+                    "paper_title": rc_config.research.paper_title,
+                    "domains": list(rc_config.research.domains),
+                },
+                "runtime": {"timezone": rc_config.runtime.timezone},
+                "notifications": {"channel": rc_config.notifications.channel},
+                "knowledge_base": {"backend": rc_config.knowledge_base.backend, "root": rc_config.knowledge_base.root},
+                "llm": {
+                    "provider": rc_config.llm.provider,
+                    "base_url": rc_config.llm.base_url,
+                    "api_key_env": rc_config.llm.api_key_env,
+                },
+                "experiment": {"mode": rc_config.experiment.mode},
+                "export": {"docx_page_limit": 10},
+            },
+            project_root=tmp_path,
+            check_paths=False,
+        )
+
+        def _fake_codex_loop(
+            stage_dir_arg: Path,
+            run_dir_arg: Path,
+            source_markdown: str,
+            config_arg: RCConfig,
+        ) -> FakeEditorialLoopResult:
+            _ = stage_dir_arg, run_dir_arg, source_markdown, config_arg
+            return FakeEditorialLoopResult(
+                success=True,
+                markdown=f"# Test Paper\n\n## Conclusion\n\n{verbose_conclusion}\n",
+                review={"source": "stage-23/paper_final_verified.md", "initial_issue_count": 0, "issues": []},
+                iterations=[],
+                assessment={"status": "pass", "remaining_issue_count": 0, "remaining_high_severity_issues": 0},
+            )
+
+        compile_calls = {"n": 0}
+        export_calls = {"n": 0}
+
+        def _fake_compile(stage_dir_arg: Path, repaired_markdown: str, config_arg: RCConfig):
+            _ = config_arg
+            compile_calls["n"] += 1
+            (stage_dir_arg / "paper_repaired.tex").write_text(repaired_markdown, encoding="utf-8")
+            (stage_dir_arg / "paper_repaired.pdf").write_bytes(b"%PDF-1.4")
+            return ["paper_repaired.tex", "paper_repaired.pdf"], ["stage-24/paper_repaired.tex", "stage-24/paper_repaired.pdf"], True
+
+        def _fake_export(stage_dir_arg: Path, *, authors: str = "Anonymous", bibliography_name: str = "references.bib"):
+            _ = authors, bibliography_name
+            export_calls["n"] += 1
+            (stage_dir_arg / "paper_repaired.docx").write_bytes(b"PK\x03\x04docx")
+            (stage_dir_arg / "docx_quality.json").write_text(
+                json.dumps({"clean": True, "heading_numbering_ok": True, "issues": []}),
+                encoding="utf-8",
+            )
+            return ["paper_repaired.docx", "docx_quality.json"], ["stage-24/paper_repaired.docx", "stage-24/docx_quality.json"], True
+
+        def _fake_audit(stage_dir_arg: Path, *, markdown: str, config: RCConfig):
+            _ = stage_dir_arg, config
+            sentence_count = markdown.count("Conclusion sentence.")
+            if sentence_count > 80:
+                return {
+                    "reference_count": 0,
+                    "reference_limit_ok": True,
+                    "docx_page_count": 12,
+                    "docx_page_limit_ok": False,
+                    "issues": ["docx_page_limit_exceeded:12>10"],
+                }
+            if sentence_count > 40:
+                return {
+                    "reference_count": 0,
+                    "reference_limit_ok": True,
+                    "docx_page_count": 11,
+                    "docx_page_limit_ok": False,
+                    "issues": ["docx_page_limit_exceeded:11>10"],
+                }
+            return {
+                "reference_count": 0,
+                "reference_limit_ok": True,
+                "docx_page_count": 9,
+                "docx_page_limit_ok": True,
+                "issues": [],
+            }
+
+        monkeypatch.setattr(stage24_mod, "_run_codex_editorial_loop", _fake_codex_loop)
+        monkeypatch.setattr(stage24_mod, "_compile_editorial_tex", _fake_compile)
+        monkeypatch.setattr(stage24_mod, "_export_editorial_docx", _fake_export)
+        monkeypatch.setattr(stage24_mod, "_audit_editorial_constraints", _fake_audit)
+        monkeypatch.setattr(
+            stage24_mod,
+            "_compress_markdown_for_docx_limit",
+            lambda markdown, **kwargs: markdown.replace(
+                "Conclusion sentence. Conclusion sentence. ",
+                "",
+                20 if kwargs.get("compression_round", 1) == 1 else 20,
+            ),
+        )
+
+        stage_dir = tmp_path / "run" / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+
+        result = rc_executor._execute_final_editorial_repair(
+            stage_dir, run_dir, config, adapters, llm=None
+        )
+
+        final_markdown = (stage_dir / "paper_repaired.md").read_text(encoding="utf-8")
+        assert result.status is StageStatus.DONE
+        assert compile_calls["n"] == 3
+        assert export_calls["n"] == 3
+        assert final_markdown.count("Conclusion sentence.") <= 40
+
+    def test_stage24_recompression_marks_shared_canonical_export_in_assessment(
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        rc_config: RCConfig,
+        adapters: AdapterBundle,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._stub_editorial_pipeline(monkeypatch)
+        stage22 = run_dir / "stage-22"
+        stage22.mkdir(parents=True, exist_ok=True)
+        (stage22 / "paper_final.md").write_text("# Test Paper\n\n## Conclusion\n\nBody.\n", encoding="utf-8")
+        (stage22 / "paper.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
+        (stage22 / "references.bib").write_text("% refs\n", encoding="utf-8")
+        stage23 = run_dir / "stage-23"
+        stage23.mkdir(parents=True, exist_ok=True)
+        (stage23 / "paper_final_verified.md").write_text("# Test Paper\n\n## Conclusion\n\nBody.\n", encoding="utf-8")
+
+        verbose_conclusion = " ".join(["Conclusion sentence."] * 120)
+        config = RCConfig.from_dict(
+            {
+                "project": {"name": rc_config.project.name, "mode": rc_config.project.mode},
+                "research": {
+                    "topic": rc_config.research.topic,
+                    "paper_title": rc_config.research.paper_title,
+                    "domains": list(rc_config.research.domains),
+                },
+                "runtime": {"timezone": rc_config.runtime.timezone},
+                "notifications": {"channel": rc_config.notifications.channel},
+                "knowledge_base": {"backend": rc_config.knowledge_base.backend, "root": rc_config.knowledge_base.root},
+                "llm": {
+                    "provider": rc_config.llm.provider,
+                    "base_url": rc_config.llm.base_url,
+                    "api_key_env": rc_config.llm.api_key_env,
+                },
+                "experiment": {"mode": rc_config.experiment.mode},
+                "export": {"docx_page_limit": 10},
+            },
+            project_root=tmp_path,
+            check_paths=False,
+        )
+
+        def _fake_codex_loop(
+            stage_dir_arg: Path,
+            run_dir_arg: Path,
+            source_markdown: str,
+            config_arg: RCConfig,
+        ) -> FakeEditorialLoopResult:
+            _ = stage_dir_arg, run_dir_arg, source_markdown, config_arg
+            return FakeEditorialLoopResult(
+                success=True,
+                markdown=f"# Test Paper\n\n## Conclusion\n\n{verbose_conclusion}\n",
+                review={"source": "stage-23/paper_final_verified.md", "initial_issue_count": 0, "issues": []},
+                iterations=[],
+                assessment={"status": "pass", "remaining_issue_count": 0, "remaining_high_severity_issues": 0},
+            )
+
+        def _fake_compile(stage_dir_arg: Path, repaired_markdown: str, config_arg: RCConfig):
+            _ = config_arg
+            (stage_dir_arg / "paper_repaired.tex").write_text(repaired_markdown, encoding="utf-8")
+            (stage_dir_arg / "paper_repaired.pdf").write_bytes(b"%PDF-1.4")
+            return ["paper_repaired.tex", "paper_repaired.pdf"], ["stage-24/paper_repaired.tex", "stage-24/paper_repaired.pdf"], True
+
+        def _fake_export(stage_dir_arg: Path, *, authors: str = "Anonymous", bibliography_name: str = "references.bib"):
+            _ = authors, bibliography_name
+            (stage_dir_arg / "paper_repaired.docx").write_bytes(b"PK\x03\x04docx")
+            (stage_dir_arg / "docx_quality.json").write_text(
+                json.dumps({"clean": True, "heading_numbering_ok": True, "issues": []}),
+                encoding="utf-8",
+            )
+            return ["paper_repaired.docx", "docx_quality.json"], ["stage-24/paper_repaired.docx", "stage-24/docx_quality.json"], True
+
+        def _fake_audit(stage_dir_arg: Path, *, markdown: str, config: RCConfig):
+            _ = stage_dir_arg, config
+            sentence_count = markdown.count("Conclusion sentence.")
+            if sentence_count > 80:
+                return {
+                    "reference_count": 0,
+                    "reference_limit_ok": True,
+                    "docx_page_count": 12,
+                    "docx_page_limit_ok": False,
+                    "issues": ["docx_page_limit_exceeded:12>10"],
+                }
+            return {
+                "reference_count": 0,
+                "reference_limit_ok": True,
+                "docx_page_count": 9,
+                "docx_page_limit_ok": True,
+                "issues": [],
+            }
+
+        monkeypatch.setattr(stage24_mod, "_run_codex_editorial_loop", _fake_codex_loop)
+        monkeypatch.setattr(stage24_mod, "_compile_editorial_tex", _fake_compile)
+        monkeypatch.setattr(stage24_mod, "_export_editorial_docx", _fake_export)
+        monkeypatch.setattr(stage24_mod, "_audit_editorial_constraints", _fake_audit)
+        monkeypatch.setattr(
+            stage24_mod,
+            "_compress_markdown_for_docx_limit",
+            lambda markdown, **kwargs: markdown.replace(
+                "Conclusion sentence. Conclusion sentence. ",
+                "",
+                20,
+            ),
+        )
+
+        stage_dir = tmp_path / "run" / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+
+        result = rc_executor._execute_final_editorial_repair(
+            stage_dir, run_dir, config, adapters, llm=None
+        )
+
+        assessment = json.loads(
+            (stage_dir / "editorial_final_assessment.json").read_text(encoding="utf-8")
+        )
+        assert result.status is StageStatus.DONE
+        assert assessment["pdf_docx_shared_canonical_content"] is True
+        assert assessment["canonical_markdown_compressed_for_page_limit"] is True
+
+    def test_stage24_compile_editorial_tex_uses_shared_stage22_export_helper(
+        self,
+        tmp_path: Path,
+        rc_config: RCConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stage_dir = tmp_path / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        from researchclaw.pipeline.stage_impls import _review_publish as review_publish
+
+        captured: dict[str, object] = {}
+
+        def _fake_export_latex_pdf(
+            *,
+            stage_dir: Path,
+            run_dir: Path,
+            markdown: str,
+            config: RCConfig,
+            output_tex_name: str,
+            output_pdf_name: str,
+            source_markdown_for_charts: str,
+            artifacts_label: str | None = None,
+            llm: object | None = None,
+        ) -> tuple[list[str], list[str], bool]:
+            _ = config, llm
+            captured["stage_dir"] = stage_dir
+            captured["run_dir"] = run_dir
+            captured["markdown"] = markdown
+            captured["output_tex_name"] = output_tex_name
+            captured["output_pdf_name"] = output_pdf_name
+            captured["source_markdown_for_charts"] = source_markdown_for_charts
+            captured["artifacts_label"] = artifacts_label
+            return ["paper_repaired.tex", "paper_repaired.pdf"], ["stage-24/paper_repaired.tex", "stage-24/paper_repaired.pdf"], True
+
+        monkeypatch.setattr(review_publish, "_export_latex_pdf_artifacts", _fake_export_latex_pdf)
+
+        artifacts, evidence, ok = stage24_mod._compile_editorial_tex(
+            stage_dir,
+            "# Test Title\n\nBody\n",
+            rc_config,
+            run_dir=run_dir,
+        )
+
+        assert ok is True
+        assert artifacts == ["paper_repaired.tex", "paper_repaired.pdf"]
+        assert evidence == ["stage-24/paper_repaired.tex", "stage-24/paper_repaired.pdf"]
+        assert captured["stage_dir"] == stage_dir
+        assert captured["run_dir"] == run_dir
+        assert captured["markdown"] == "# Test Title\n\nBody\n"
+        assert captured["output_tex_name"] == "paper_repaired.tex"
+        assert captured["output_pdf_name"] == "paper_repaired.pdf"
+        assert captured["source_markdown_for_charts"] == "# Test Title\n\nBody\n"
+        assert captured["artifacts_label"] == "Stage 24"
+
+    def test_shared_latex_pdf_export_reuses_stage22_charts_and_compile_preflight(
+        self,
+        tmp_path: Path,
+        rc_config: RCConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from researchclaw.pipeline.stage_impls import _review_publish as review_publish
+        import researchclaw.templates as rc_templates
+        from researchclaw.experiment import visualize as rc_visualize
+        from researchclaw.templates import compiler as rc_compiler
+
+        run_dir = tmp_path / "run"
+        stage22_charts = run_dir / "stage-22" / "charts"
+        stage22_charts.mkdir(parents=True, exist_ok=True)
+        (stage22_charts / "fig_main.png").write_bytes(b"stage22-chart")
+        stage_dir = run_dir / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        style_dir = tmp_path / "styles"
+        style_dir.mkdir()
+        style_file = style_dir / "neurips_2025.sty"
+        style_file.write_text("% style\n", encoding="utf-8")
+
+        class _FakeTemplate:
+            display_name = "NeurIPS 2025"
+
+            @staticmethod
+            def get_style_files() -> list[Path]:
+                return [style_file]
+
+        def _fake_markdown_to_latex(
+            text: str,
+            tpl: object,
+            title: str = "",
+            authors: str = "",
+            bib_file: str = "",
+            bib_entries: dict[str, str] | None = None,
+            submission_profile: str = "default",
+        ) -> str:
+            _ = text, tpl, title, authors, bib_file, bib_entries, submission_profile
+            return (
+                "\\documentclass{article}\n"
+                "\\begin{document}\n"
+                "\\includegraphics{charts/fig_main.png}\n"
+                "\\end{document}\n"
+            )
+
+        def _fake_compile_latex(
+            tex_path: Path,
+            max_attempts: int = 2,
+            timeout: int = 120,
+        ) -> SimpleNamespace:
+            _ = max_attempts, timeout
+            assert (tex_path.parent / "charts" / "fig_main.png").read_bytes() == b"stage22-chart"
+            assert (tex_path.parent / "neurips_2025.sty").exists()
+            (tex_path.parent / "paper_repaired.pdf").write_bytes(b"%PDF-1.4\n")
+            return SimpleNamespace(success=True, errors=[])
+
+        monkeypatch.setattr(rc_templates, "get_template", lambda _name: _FakeTemplate())
+        monkeypatch.setattr(rc_templates, "markdown_to_latex", _fake_markdown_to_latex)
+        monkeypatch.setattr(rc_visualize, "generate_all_charts", lambda *args, **kwargs: [])
+        monkeypatch.setattr(rc_compiler, "compile_latex", _fake_compile_latex)
+
+        artifacts, evidence, ok = review_publish._export_latex_pdf_artifacts(
+            stage_dir=stage_dir,
+            run_dir=run_dir,
+            markdown="# Test Title\n\n![Main](charts/fig_main.png)\n",
+            config=rc_config,
+            output_tex_name="paper_repaired.tex",
+            output_pdf_name="paper_repaired.pdf",
+            source_markdown_for_charts="# Test Title\n\n![Main](charts/fig_main.png)\n",
+            artifacts_label="Stage 24",
+        )
+
+        assert ok is True
+        assert (stage_dir / "charts" / "fig_main.png").read_bytes() == b"stage22-chart"
+        assert (stage_dir / "paper_repaired.tex").exists()
+        assert (stage_dir / "paper_repaired.pdf").exists()
+        assert "paper_repaired.tex" in artifacts
+        assert "paper_repaired.pdf" in artifacts
+        assert "stage-24/paper_repaired.tex" in evidence
+        assert "stage-24/paper_repaired.pdf" in evidence
+
+    def test_shared_latex_pdf_export_does_not_prefix_warning_header_into_tex_on_compile_failure(
+        self,
+        tmp_path: Path,
+        rc_config: RCConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from researchclaw.pipeline.stage_impls import _review_publish as review_publish
+        import researchclaw.templates as rc_templates
+        from researchclaw.experiment import visualize as rc_visualize
+        from researchclaw.templates import compiler as rc_compiler
+
+        run_dir = tmp_path / "run"
+        stage_dir = run_dir / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        style_dir = tmp_path / "styles"
+        style_dir.mkdir()
+        style_file = style_dir / "neurips_2025.sty"
+        style_file.write_text("% style\n", encoding="utf-8")
+
+        class _FakeTemplate:
+            display_name = "NeurIPS 2025"
+
+            @staticmethod
+            def get_style_files() -> list[Path]:
+                return [style_file]
+
+        def _fake_markdown_to_latex(
+            text: str,
+            tpl: object,
+            title: str = "",
+            authors: str = "",
+            bib_file: str = "",
+            bib_entries: dict[str, str] | None = None,
+            submission_profile: str = "default",
+        ) -> str:
+            _ = text, tpl, title, authors, bib_file, bib_entries, submission_profile
+            return "\\documentclass{article}\n\\begin{document}\nBody\n\\end{document}\n"
+
+        monkeypatch.setattr(rc_templates, "get_template", lambda _name: _FakeTemplate())
+        monkeypatch.setattr(rc_templates, "markdown_to_latex", _fake_markdown_to_latex)
+        monkeypatch.setattr(rc_visualize, "generate_all_charts", lambda *args, **kwargs: [])
+        monkeypatch.setattr(
+            rc_compiler,
+            "compile_latex",
+            lambda *args, **kwargs: SimpleNamespace(
+                success=False,
+                errors=["! LaTeX Error: File `algorithmic.sty' not found."],
+            ),
+        )
+
+        artifacts, evidence, ok = review_publish._export_latex_pdf_artifacts(
+            stage_dir=stage_dir,
+            run_dir=run_dir,
+            markdown="# Test Title\n\nBody\n",
+            config=rc_config,
+            output_tex_name="paper_repaired.tex",
+            output_pdf_name="paper_repaired.pdf",
+            source_markdown_for_charts="# Test Title\n\nBody\n",
+            artifacts_label="Stage 24",
+        )
+
+        assert ok is False
+        assert artifacts == ["paper_repaired.tex"]
+        assert evidence == ["stage-24/paper_repaired.tex"]
+        tex_text = (stage_dir / "paper_repaired.tex").read_text(encoding="utf-8")
+        assert tex_text.startswith("\\documentclass")
+        assert "% WARNING: Compilation failed" not in tex_text
+
+    def test_markdown_to_latex_omits_algorithm_packages_when_unused(self) -> None:
+        import researchclaw.templates as rc_templates
+
+        template = rc_templates.get_template("neurips_2025")
+        tex = rc_templates.markdown_to_latex(
+            "# Test Title\n\n## Abstract\n\nAbstract.\n\n## Method\n\nBody.\n",
+            template,
+            title="Test Title",
+            authors="Anonymous",
+            bib_file="references",
+        )
+
+        assert "\\usepackage{algorithm}" not in tex
+        assert "\\usepackage{algorithmic}" not in tex
+
+    def test_markdown_to_latex_uses_plain_table_caption_blocks(self) -> None:
+        import researchclaw.templates as rc_templates
+
+        template = rc_templates.get_template("neurips_2025")
+        tex = rc_templates.markdown_to_latex(
+            (
+                "# Test Title\n\n"
+                "## Abstract\n\n"
+                "Abstract.\n\n"
+                "## Experiments\n\n"
+                "Table 1. Summary of evaluation datasets.\n\n"
+                "| Abbr. | Condition |\n"
+                "|---|---|\n"
+                "| CATB | baseline |\n"
+            ),
+            template,
+            title="Test Title",
+            authors="Anonymous",
+            bib_file="references",
+        )
+
+        assert "\\caption{Summary of evaluation datasets.}" in tex
+
     def test_stage24_docx_export_uses_reference_doc_and_standalone(
         self,
         tmp_path: Path,
@@ -2253,6 +3283,404 @@ class TestStage24EditorialRepair:
         assert "--standalone" in cmd
         assert "--reference-doc" in cmd
         assert "paper_repaired_docx.md" in cmd
+
+    def test_stage24_audit_editorial_constraints_flags_reference_limit(
+        self,
+        tmp_path: Path,
+        rc_config: RCConfig,
+    ) -> None:
+        stage_dir = tmp_path / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        config = RCConfig.from_dict(
+            {
+                "project": {"name": rc_config.project.name, "mode": rc_config.project.mode},
+                "research": {
+                    "topic": rc_config.research.topic,
+                    "paper_title": rc_config.research.paper_title,
+                    "domains": list(rc_config.research.domains),
+                },
+                "runtime": {"timezone": rc_config.runtime.timezone},
+                "notifications": {"channel": rc_config.notifications.channel},
+                "knowledge_base": {"backend": rc_config.knowledge_base.backend, "root": rc_config.knowledge_base.root},
+                "llm": {
+                    "provider": rc_config.llm.provider,
+                    "base_url": rc_config.llm.base_url,
+                    "api_key_env": rc_config.llm.api_key_env,
+                },
+                "experiment": {"mode": rc_config.experiment.mode},
+                "export": {"max_references": 1},
+            },
+            project_root=tmp_path,
+            check_paths=False,
+        )
+
+        quality = stage24_mod._audit_editorial_constraints(
+            stage_dir,
+            markdown="Intro [smith2024, doe2023].\n",
+            config=config,
+        )
+
+        assert quality["reference_limit_ok"] is False
+        assert quality["reference_count"] == 2
+        assert "reference_limit_exceeded:2>1" in quality["issues"]
+
+    def test_stage24_audit_editorial_constraints_flags_docx_page_limit(
+        self,
+        tmp_path: Path,
+        rc_config: RCConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stage_dir = tmp_path / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        docx_path = stage_dir / "paper_repaired.docx"
+        pdf_path = stage_dir / "paper_repaired.pdf"
+        docx_path.write_bytes(b"PK\x03\x04docx")
+        pdf_path.write_bytes(b"/Type /Page\n/Type /Page\n/Type /Page\n")
+        config = RCConfig.from_dict(
+            {
+                "project": {"name": rc_config.project.name, "mode": rc_config.project.mode},
+                "research": {
+                    "topic": rc_config.research.topic,
+                    "paper_title": rc_config.research.paper_title,
+                    "domains": list(rc_config.research.domains),
+                },
+                "runtime": {"timezone": rc_config.runtime.timezone},
+                "notifications": {"channel": rc_config.notifications.channel},
+                "knowledge_base": {"backend": rc_config.knowledge_base.backend, "root": rc_config.knowledge_base.root},
+                "llm": {
+                    "provider": rc_config.llm.provider,
+                    "base_url": rc_config.llm.base_url,
+                    "api_key_env": rc_config.llm.api_key_env,
+                },
+                "experiment": {"mode": rc_config.experiment.mode},
+                "export": {"docx_page_limit": 2},
+            },
+            project_root=tmp_path,
+            check_paths=False,
+        )
+        monkeypatch.setattr(
+            stage24_mod,
+            "_convert_docx_to_pdf_for_page_count",
+            lambda _docx_path: pdf_path,
+        )
+
+        quality = stage24_mod._audit_editorial_constraints(
+            stage_dir,
+            markdown="Intro.\n",
+            config=config,
+        )
+
+        assert quality["docx_page_limit_ok"] is False
+        assert quality["docx_page_count"] == 3
+        assert "docx_page_limit_exceeded:3>2" in quality["issues"]
+
+    def test_stage24_docx_page_count_conversion_does_not_overwrite_latex_pdf(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stage_dir = tmp_path / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        docx_path = stage_dir / "paper_repaired.docx"
+        latex_pdf_path = stage_dir / "paper_repaired.pdf"
+        docx_path.write_bytes(b"PK\x03\x04docx")
+        latex_pdf_path.write_bytes(b"LATEX-PDF")
+        captured: dict[str, object] = {}
+
+        def _fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            _ = kwargs
+            captured["cmd"] = cmd
+            outdir = Path(cmd[cmd.index("--outdir") + 1])
+            input_docx = Path(cmd[-1])
+            outdir.mkdir(parents=True, exist_ok=True)
+            (outdir / f"{input_docx.stem}.pdf").write_bytes(b"DOCX-PDF")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(
+            stage24_mod,
+            "which",
+            lambda name: "/usr/bin/soffice" if name == "soffice" else None,
+        )
+        monkeypatch.setattr(stage24_mod.subprocess, "run", _fake_run)
+
+        converted_pdf = stage24_mod._convert_docx_to_pdf_for_page_count(docx_path)
+
+        assert converted_pdf is not None
+        assert converted_pdf.exists()
+        assert converted_pdf != latex_pdf_path
+        assert converted_pdf.read_bytes() == b"DOCX-PDF"
+        assert latex_pdf_path.read_bytes() == b"LATEX-PDF"
+        cmd = cast(list[str], captured["cmd"])
+        assert Path(cmd[cmd.index("--outdir") + 1]) != stage_dir
+
+    def test_stage24_postprocess_docx_adds_display_equation_numbers(self, tmp_path: Path) -> None:
+        docx_path = tmp_path / "paper_repaired.docx"
+        document_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+  <w:body>
+    <w:p><w:r><w:t>Equation (1) defines the hidden representation.</w:t></w:r></w:p>
+    <w:p><m:oMathPara><m:oMath><m:r><m:t>h</m:t></m:r></m:oMath></m:oMathPara></w:p>
+    <w:p><w:r><w:t>Equation (2) defines the classifier.</w:t></w:r></w:p>
+    <w:p><m:oMathPara><m:oMath><m:r><m:t>p</m:t></m:r></m:oMath></m:oMathPara></w:p>
+  </w:body>
+</w:document>"""
+        styles_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"""
+        numbering_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"""
+        with ZipFile(docx_path, "w", ZIP_DEFLATED) as zf:
+            zf.writestr("word/document.xml", document_xml)
+            zf.writestr("word/styles.xml", styles_xml)
+            zf.writestr("word/numbering.xml", numbering_xml)
+
+        quality = stage24_mod._postprocess_editorial_docx(docx_path)
+
+        with ZipFile(docx_path) as zf:
+            processed = zf.read("word/document.xml").decode("utf-8")
+        assert quality["equation_numbers_present"] is True
+        assert "(1)" in processed
+        assert "(2)" in processed
+
+    def test_stage24_postprocess_docx_centers_display_equations_and_marks_alignment_ok(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        docx_path = tmp_path / "paper_repaired.docx"
+        document_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="BodyText"/></w:pPr><w:r><w:t>Equation (1) defines the representation.</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="BodyText"/></w:pPr><m:oMathPara><m:oMath><m:r><m:t>h</m:t></m:r></m:oMath></m:oMathPara></w:p>
+  </w:body>
+</w:document>"""
+        styles_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/></w:style>
+</w:styles>"""
+        numbering_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"""
+        with ZipFile(docx_path, "w", ZIP_DEFLATED) as zf:
+            zf.writestr("word/document.xml", document_xml)
+            zf.writestr("word/styles.xml", styles_xml)
+            zf.writestr("word/numbering.xml", numbering_xml)
+
+        quality = stage24_mod._postprocess_editorial_docx(docx_path)
+
+        with ZipFile(docx_path) as zf:
+            processed = zf.read("word/document.xml").decode("utf-8")
+        document_root = stage24_mod.etree.fromstring(processed.encode("utf-8"))
+        equation_tables = document_root.xpath(
+            './/w:tbl[w:tblPr/w:tblCaption[@w:val="RCEquationLayout"]]',
+            namespaces=stage24_mod._DOCX_NS,
+        )
+        assert equation_tables == []
+        direct_math_paragraphs = document_root.xpath(
+            "./w:body/w:p[m:oMath]",
+            namespaces=stage24_mod._DOCX_NS,
+        )
+        assert len(direct_math_paragraphs) == 1
+        assert quality["equation_numbers_present"] is True
+        assert quality["equation_alignment_ok"] is True
+        equation_paragraph = direct_math_paragraphs[0]
+        assert stage24_mod._docx_paragraph_text(equation_paragraph) == "(1)"
+        assert equation_paragraph.xpath(
+            "./w:pPr/w:tabs/w:tab[@w:val='center']",
+            namespaces=stage24_mod._DOCX_NS,
+        )
+        assert equation_paragraph.xpath(
+            "./w:pPr/w:tabs/w:tab[@w:val='right']",
+            namespaces=stage24_mod._DOCX_NS,
+        )
+        tab_runs = equation_paragraph.xpath("./w:r[w:tab]", namespaces=stage24_mod._DOCX_NS)
+        assert len(tab_runs) == 2
+
+    def test_stage24_postprocess_docx_does_not_number_inline_math_paragraphs(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        docx_path = tmp_path / "paper_repaired.docx"
+        document_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+  <w:body>
+    <w:p>
+      <w:pPr><w:pStyle w:val="BodyText"/></w:pPr>
+      <w:r><w:t>The score uses </w:t></w:r>
+      <m:oMath><m:r><m:t>F</m:t></m:r></m:oMath>
+      <w:r><w:t> for ranking.</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:pPr><w:pStyle w:val="BodyText"/></w:pPr>
+      <m:oMathPara><m:oMath><m:r><m:t>h</m:t></m:r></m:oMath></m:oMathPara>
+    </w:p>
+  </w:body>
+</w:document>"""
+        styles_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/></w:style>
+</w:styles>"""
+        numbering_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"""
+        with ZipFile(docx_path, "w", ZIP_DEFLATED) as zf:
+            zf.writestr("word/document.xml", document_xml)
+            zf.writestr("word/styles.xml", styles_xml)
+            zf.writestr("word/numbering.xml", numbering_xml)
+
+        quality = stage24_mod._postprocess_editorial_docx(docx_path)
+
+        assert quality["equation_numbers_present"] is True
+        with ZipFile(docx_path) as zf:
+            processed = zf.read("word/document.xml").decode("utf-8")
+        document_root = stage24_mod.etree.fromstring(processed.encode("utf-8"))
+        paragraphs = document_root.xpath("./w:body/w:p", namespaces=stage24_mod._DOCX_NS)
+        assert len(paragraphs) == 2
+        assert stage24_mod._docx_paragraph_text(paragraphs[0]) == "The score uses  for ranking."
+        assert not paragraphs[0].xpath(
+            "./w:r[w:t='(1)' or w:t='(2)']",
+            namespaces=stage24_mod._DOCX_NS,
+        )
+        assert stage24_mod._docx_paragraph_text(paragraphs[1]) == "(1)"
+
+    def test_stage24_postprocess_docx_restores_missing_figure_caption_numbers(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        docx_path = tmp_path / "paper_repaired.docx"
+        document_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="CaptionedFigure"/></w:pPr><w:r><w:drawing/></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="ImageCaption"/></w:pPr><w:r><w:t>Overview caption.</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="CaptionedFigure"/></w:pPr><w:r><w:drawing/></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="ImageCaption"/></w:pPr><w:r><w:t>Figure 2. Ablation caption.</w:t></w:r></w:p>
+  </w:body>
+</w:document>"""
+        styles_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="CaptionedFigure"><w:name w:val="Captioned Figure"/></w:style>
+  <w:style w:type="paragraph" w:styleId="ImageCaption"><w:name w:val="Image Caption"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/></w:style>
+</w:styles>"""
+        numbering_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"""
+        with ZipFile(docx_path, "w", ZIP_DEFLATED) as zf:
+            zf.writestr("word/document.xml", document_xml)
+            zf.writestr("word/styles.xml", styles_xml)
+            zf.writestr("word/numbering.xml", numbering_xml)
+
+        quality = stage24_mod._postprocess_editorial_docx(docx_path)
+
+        with ZipFile(docx_path) as zf:
+            processed = zf.read("word/document.xml").decode("utf-8")
+        assert quality["figure_caption_numbering_ok"] is True
+        assert "Figure 1. Overview caption." in processed
+        assert "Figure 2. Ablation caption." in processed
+        assert "Figure 2. Figure 2. Ablation caption." not in processed
+
+    def test_stage24_count_pdf_pages_prefers_pdfinfo(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        pdf_path = tmp_path / "paper.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\n")
+
+        def _fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            assert cmd == ["/usr/bin/pdfinfo", str(pdf_path)]
+            _ = kwargs
+            return SimpleNamespace(returncode=0, stdout="Pages:          5\n", stderr="")
+
+        monkeypatch.setattr(stage24_mod, "which", lambda name: "/usr/bin/pdfinfo" if name == "pdfinfo" else None)
+        monkeypatch.setattr(stage24_mod.subprocess, "run", _fake_run)
+
+        assert stage24_mod._count_pdf_pages(pdf_path) == 5
+
+    def test_stage24_audit_editorial_constraints_treats_missing_page_count_as_warning(
+        self,
+        tmp_path: Path,
+        rc_config: RCConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stage_dir = tmp_path / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        docx_path = stage_dir / "paper_repaired.docx"
+        docx_path.write_bytes(b"PK\x03\x04docx")
+        config = RCConfig.from_dict(
+            {
+                "project": {"name": rc_config.project.name, "mode": rc_config.project.mode},
+                "research": {
+                    "topic": rc_config.research.topic,
+                    "paper_title": rc_config.research.paper_title,
+                    "domains": list(rc_config.research.domains),
+                },
+                "runtime": {"timezone": rc_config.runtime.timezone},
+                "notifications": {"channel": rc_config.notifications.channel},
+                "knowledge_base": {"backend": rc_config.knowledge_base.backend, "root": rc_config.knowledge_base.root},
+                "llm": {
+                    "provider": rc_config.llm.provider,
+                    "base_url": rc_config.llm.base_url,
+                    "api_key_env": rc_config.llm.api_key_env,
+                },
+                "experiment": {"mode": rc_config.experiment.mode},
+                "export": {"docx_page_limit": 2},
+            },
+            project_root=tmp_path,
+            check_paths=False,
+        )
+        monkeypatch.setattr(
+            stage24_mod,
+            "_convert_docx_to_pdf_for_page_count",
+            lambda _docx_path: None,
+        )
+
+        quality = stage24_mod._audit_editorial_constraints(
+            stage_dir,
+            markdown="Intro.\n",
+            config=config,
+        )
+
+        assert quality["docx_page_limit_ok"] is True
+        assert quality["docx_page_count"] == 0
+        assert quality["issues"] == []
+        assert "docx_page_count_unavailable" in quality["warnings"]
+
+    def test_stage24_syncs_bibliography_with_markdown_and_deduplicates_keys(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        stage_dir = tmp_path / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        (stage_dir / "references.bib").write_text(
+            (
+                "@article{aguilarruiz2024classspecific,\n"
+                "  title={Journal version},\n"
+                "  doi={10.1000/test-doi}\n"
+                "}\n\n"
+                "@article{aguilarruiz2024classspecific,\n"
+                "  title={arXiv version},\n"
+                "  journal={arXiv preprint arXiv:2401.12345}\n"
+                "}\n\n"
+                "@article{smith2024,\n"
+                "  title={Keep me}\n"
+                "}\n\n"
+                "@article{unused2024,\n"
+                "  title={Drop me}\n"
+                "}\n"
+            ),
+            encoding="utf-8",
+        )
+
+        synced = stage24_mod._sync_bibliography_with_markdown(
+            stage_dir,
+            markdown="Discussion [aguilarruiz2024classspecific, smith2024].\n",
+        )
+
+        assert synced is True
+        bib_text = (stage_dir / "references.bib").read_text(encoding="utf-8")
+        assert bib_text.count("@article{aguilarruiz2024classspecific,") == 1
+        assert "doi={10.1000/test-doi}" in bib_text
+        assert "arXiv preprint" not in bib_text
+        assert "@article{smith2024," in bib_text
+        assert "unused2024" not in bib_text
 
     def test_stage24_prepare_docx_markdown_strips_latex_float_envs(self) -> None:
         markdown = (
@@ -2781,6 +4209,9 @@ class TestStage24EditorialRepair:
             cmd = cast(list[str], kwargs["args"] if "args" in kwargs else args[0])
             seen.append(cmd)
             cwd = cast(Path, kwargs["cwd"])
+            if cmd and Path(cmd[0]).name == "pandoc":
+                (cwd / "paper_repaired.docx").write_bytes(b"PK\x03\x04docx")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
             (cwd / "paper_repaired.md").write_text("# Test Paper\n\n## Results\n\nRepaired.\n", encoding="utf-8")
             (cwd / "codex_review.json").write_text(
                 json.dumps(
@@ -2797,6 +4228,17 @@ class TestStage24EditorialRepair:
 
         monkeypatch.setattr(stage24_mod, "_resolve_editorial_codex_binary", lambda _cfg: "/usr/bin/codex")
         monkeypatch.setattr(stage24_mod.subprocess, "run", _fake_run)
+        monkeypatch.setattr(
+            stage24_mod,
+            "_postprocess_editorial_docx",
+            lambda _path: {
+                "clean": True,
+                "heading_numbering_ok": True,
+                "keywords_present": True,
+                "numeric_citations_plain": True,
+                "issues": [],
+            },
+        )
 
         result = rc_executor._execute_final_editorial_repair(
             stage_dir, run_dir, rc_config, adapters, llm=None
@@ -2833,6 +4275,9 @@ class TestStage24EditorialRepair:
             cmd = cast(list[str], kwargs["args"] if "args" in kwargs else args[0])
             seen.append(cmd)
             cwd = cast(Path, kwargs["cwd"])
+            if cmd and Path(cmd[0]).name == "pandoc":
+                (cwd / "paper_repaired.docx").write_bytes(b"PK\x03\x04docx")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
             (cwd / "paper_repaired.md").write_text("# Test Paper\n\n## Results\n\nRepaired.\n", encoding="utf-8")
             (cwd / "codex_review.json").write_text(
                 json.dumps(
@@ -3037,6 +4482,55 @@ class TestStage24EditorialRepair:
         assert bundles[0].caption_index is not None
         assert bundles[0].explanation_indices
 
+    def test_stage24_audit_accepts_neighbor_figure_discussion_without_caption_block(self) -> None:
+        markdown = (
+            "# T\n\n"
+            "## Results and Analysis\n\n"
+            "The heatmap in Figure 4 makes the pooled ordering easier to audit at dataset level.\n\n"
+            "![Dataset-level F1 heatmap for Adult and Covtype.](charts/fig_dataset_method_heatmap.png)\n\n"
+            "Figure 4 also explains why the pooled gap remains modest across datasets.\n"
+        )
+
+        issues = stage24_mod._audit_markdown(stage24_mod._split_blocks(markdown))
+
+        assert issues == []
+
+    def test_stage24_audit_flags_figure_without_explicit_numbered_reference(self) -> None:
+        markdown = (
+            "# T\n\n"
+            "## Results and Analysis\n\n"
+            "The heatmap below reinforces this regime-specific view.\n\n"
+            "![Dataset-level F1 heatmap for Adult and Covtype across the evaluated methods.](charts/fig_dataset_method_heatmap.png)\n\n"
+            "*Figure 4. Dataset-level F1 heatmap for the evaluated methods.*\n"
+        )
+
+        issues = stage24_mod._audit_markdown(stage24_mod._split_blocks(markdown))
+
+        assert any(
+            issue["type"] == "missing_explicit_figure_reference"
+            and issue["severity"] == "high"
+            for issue in issues
+        )
+
+    def test_stage24_audit_flags_table_without_explicit_numbered_reference(self) -> None:
+        markdown = (
+            "# T\n\n"
+            "## Experiments\n\n"
+            "The benchmark setup is summarized below.\n\n"
+            "Table 1. Evaluated conditions in the validated benchmark execution.\n\n"
+            "| Abbr. | Condition |\n"
+            "|---|---|\n"
+            "| CATB | baseline |\n"
+        )
+
+        issues = stage24_mod._audit_markdown(stage24_mod._split_blocks(markdown))
+
+        assert any(
+            issue["type"] == "missing_explicit_table_reference"
+            and issue["severity"] == "high"
+            for issue in issues
+        )
+
     def test_stage24_loop_stages_bib_and_charts_before_compile(
         self,
         tmp_path: Path,
@@ -3113,6 +4607,66 @@ class TestStage24EditorialRepair:
 
         assert result.success is True
         assert seen_compile == {"has_bib": True, "has_chart": True}
+
+    def test_stage24_compile_editorial_tex_copies_template_style_files(
+        self,
+        tmp_path: Path,
+        rc_config: RCConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import researchclaw.templates as rc_templates
+        from researchclaw.templates import compiler as rc_compiler
+
+        stage_dir = tmp_path / "stage-24"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        style_file = tmp_path / "neurips_2025.sty"
+        style_file.write_text("% bundled style\n", encoding="utf-8")
+        bib_style = tmp_path / "plainnat.bst"
+        bib_style.write_text("% bundled bst\n", encoding="utf-8")
+
+        class _FakeTemplate:
+            @staticmethod
+            def get_style_files() -> list[Path]:
+                return [style_file, bib_style]
+
+        def _fake_markdown_to_latex(
+            text: str,
+            tpl: object,
+            title: str = "",
+            authors: str = "",
+            bib_file: str = "",
+            bib_entries: dict[str, str] | None = None,
+            submission_profile: str = "default",
+        ) -> str:
+            _ = text, tpl, title, authors, bib_file, bib_entries, submission_profile
+            return "\\documentclass{article}\n\\begin{document}\nBody\n\\end{document}\n"
+
+        def _fake_compile_latex(
+            tex_path: Path,
+            max_attempts: int = 2,
+            timeout: int = 120,
+        ) -> SimpleNamespace:
+            _ = max_attempts, timeout
+            assert (stage_dir / "neurips_2025.sty").exists()
+            assert (stage_dir / "plainnat.bst").exists()
+            (tex_path.parent / "paper_repaired.pdf").write_bytes(b"%PDF-1.4\n")
+            return SimpleNamespace(success=True, errors=[])
+
+        monkeypatch.setattr(rc_templates, "get_template", lambda _name: _FakeTemplate())
+        monkeypatch.setattr(rc_templates, "markdown_to_latex", _fake_markdown_to_latex)
+        monkeypatch.setattr(rc_compiler, "compile_latex", _fake_compile_latex)
+
+        artifacts, evidence, ok = stage24_mod._compile_editorial_tex(
+            stage_dir,
+            "# Test Title\n\nBody\n",
+            rc_config,
+        )
+
+        assert ok is True
+        assert (stage_dir / "neurips_2025.sty").exists()
+        assert (stage_dir / "plainnat.bst").exists()
+        assert artifacts == ["paper_repaired.tex", "paper_repaired.pdf"]
+        assert evidence == ["stage-24/paper_repaired.tex", "stage-24/paper_repaired.pdf"]
 
     def test_stage24_publish_first_writes_codex_review_and_warns_on_minor_risks(
         self,
@@ -3260,6 +4814,7 @@ class TestStage24EditorialRepair:
         assert "single-figure page" in task
         assert "awkward page breaks" in task
         assert "shrink a figure modestly" in task
+        assert "normal LaTeX paper layout" in task
 
     def test_stage24_workspace_prefers_existing_stage24_tex_pdf_for_resume(
         self,
@@ -4158,6 +5713,12 @@ class TestRemoveCitationsFromText:
         result = rc_executor._remove_citations_from_text(text, {"venus2024"})
         assert r"\cite{good2024}" in result
 
+    def test_removes_key_from_multi_markdown_citation_cluster(self) -> None:
+        text = "See [alpha2024, conrad2022benchmarking, beta2023] for details."
+        result = rc_executor._remove_citations_from_text(text, {"conrad2022benchmarking"})
+        assert "[alpha2024, beta2023]" in result
+        assert "conrad2022benchmarking" not in result
+
 
 class TestCollectRawExperimentMetrics:
     """Tests for _collect_raw_experiment_metrics() helper."""
@@ -4343,6 +5904,76 @@ class TestWritePaperSections:
             citation_instruction="",
             outline="Outline",
         )
+
+    def test_injects_shared_keywords_and_equation_rules(self) -> None:
+        class PromptTrackingLLM:
+            def __init__(self):
+                self.user_prompts: list[str] = []
+
+            def chat(self, messages, **kwargs):
+                _ = kwargs
+                for m in messages:
+                    if m.get("role") == "user":
+                        self.user_prompts.append(m["content"])
+                from researchclaw.llm.client import LLMResponse
+
+                return LLMResponse(content="## Section\nContent here.", model="fake")
+
+        llm = PromptTrackingLLM()
+        from researchclaw.prompts import PromptManager
+        pm = PromptManager()
+
+        rc_executor._write_paper_sections(
+            llm=llm,
+            pm=pm,
+            preamble="Preamble",
+            topic_constraint="",
+            exp_metrics_instruction="",
+            citation_instruction="",
+            exact_title_instruction="",
+            outline="Outline",
+            submission_profile="default",
+        )
+
+        combined = "\n".join(llm.user_prompts)
+        assert "Keywords" in combined
+        assert "display equation" in combined
+        assert "parameter" in combined
+
+    def test_ei_submission_profile_rewrites_section_expectations(self) -> None:
+        class PromptTrackingLLM:
+            def __init__(self):
+                self.user_prompts: list[str] = []
+
+            def chat(self, messages, **kwargs):
+                _ = kwargs
+                for m in messages:
+                    if m.get("role") == "user":
+                        self.user_prompts.append(m["content"])
+                from researchclaw.llm.client import LLMResponse
+
+                return LLMResponse(content="## Section\nContent here.", model="fake")
+
+        llm = PromptTrackingLLM()
+        from researchclaw.prompts import PromptManager
+        pm = PromptManager()
+
+        rc_executor._write_paper_sections(
+            llm=llm,
+            pm=pm,
+            preamble="Preamble",
+            topic_constraint="",
+            exp_metrics_instruction="",
+            citation_instruction="",
+            exact_title_instruction="",
+            outline="Outline",
+            submission_profile="ei_conference",
+        )
+
+        combined = "\n".join(llm.user_prompts)
+        assert "Results and Analysis" in combined
+        assert "Do NOT create a standalone Related Work section" in combined
+        assert "Do NOT create standalone Discussion or Limitations sections" in combined
 
         assert len(llm.user_prompts) == 3
         # Call 2 and 3 should contain "sections written so far"

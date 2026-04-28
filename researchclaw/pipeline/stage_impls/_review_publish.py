@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import re
+import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,11 @@ logger = logging.getLogger(__name__)
 def _get_collect_raw_experiment_metrics():
     from researchclaw.pipeline.stage_impls._paper_writing import _collect_raw_experiment_metrics
     return _collect_raw_experiment_metrics
+
+
+def _get_shared_submission_rules():
+    from researchclaw.pipeline.stage_impls._paper_writing import _shared_submission_rules
+    return _shared_submission_rules
 
 
 def _get_review_compiled_pdf():
@@ -146,6 +152,242 @@ def _copy_referenced_stage14_charts(
         shutil.copy2(src_path, dest)
         copied.append(dest)
     return copied, missing
+
+
+def _copy_stage22_chart_tree(run_dir: Path, chart_dir: Path) -> list[Path]:
+    """Copy already-exported Stage 22 chart assets into another compile dir."""
+    source = run_dir / "stage-22" / "charts"
+    if not source.is_dir():
+        return []
+    try:
+        if source.resolve() == chart_dir.resolve():
+            return []
+    except OSError:
+        return []
+
+    chart_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    for child in sorted(source.iterdir()):
+        target = chart_dir / child.name
+        if child.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(child, target)
+            copied.append(target)
+            continue
+        if child.is_file():
+            shutil.copy2(child, target)
+            copied.append(target)
+    return copied
+
+
+def _export_latex_pdf_artifacts(
+    *,
+    stage_dir: Path,
+    run_dir: Path,
+    markdown: str,
+    config: RCConfig,
+    output_tex_name: str,
+    output_pdf_name: str,
+    source_markdown_for_charts: str,
+    artifacts_label: str | None = None,
+    bib_entries: dict[str, str] | None = None,
+    llm: LLMClient | None = None,
+    write_quality_report: bool = False,
+) -> tuple[list[str], list[str], bool]:
+    """Generate LaTeX/PDF artifacts through the Stage 22 compile pipeline.
+
+    Stage 24 uses this helper so its PDF keeps the same LaTeX template,
+    resource preparation, figure reconciliation, and compile preflight as
+    Stage 22 while still using Stage 24 canonical markdown as content.
+    """
+    label = artifacts_label or stage_dir.name
+    evidence_prefix = stage_dir.name
+    artifacts: list[str] = []
+    evidence: list[str] = []
+    compile_ok = False
+
+    try:
+        from researchclaw.templates import get_template, markdown_to_latex
+
+        tpl = get_template(config.export.target_conference)
+        title = _extract_paper_title(markdown)
+        tex_content = markdown_to_latex(
+            markdown,
+            tpl,
+            title=title if title != "Untitled Paper" else "",
+            authors=config.export.authors,
+            bib_file=config.export.bib_file,
+            bib_entries=bib_entries,
+            submission_profile=config.export.submission_profile,
+        )
+        tex_path = stage_dir / output_tex_name
+        tex_path.write_text(tex_content, encoding="utf-8")
+        artifacts.append(output_tex_name)
+        evidence.append(f"{evidence_prefix}/{output_tex_name}")
+        logger.info(
+            "%s: Generated %s for %s (%d chars)",
+            label,
+            output_tex_name,
+            getattr(tpl, "display_name", config.export.target_conference),
+            len(tex_content),
+        )
+
+        for style_file in tpl.get_style_files():
+            if not style_file.is_file():
+                continue
+            target = stage_dir / style_file.name
+            try:
+                if style_file.resolve() == target.resolve():
+                    continue
+            except OSError:
+                pass
+            shutil.copy2(style_file, target)
+
+        try:
+            chart_dir = stage_dir / "charts"
+            chart_dir.mkdir(parents=True, exist_ok=True)
+            charts: list[Path] = []
+            charts.extend(_copy_stage22_chart_tree(run_dir, chart_dir))
+            referenced_chart_files = _extract_referenced_chart_files(
+                source_markdown_for_charts + "\n" + tex_content
+            )
+            existing_chart_files = {
+                child.name for child in chart_dir.iterdir() if child.is_file()
+            }
+            copied_stage14, missing_stage14 = _copy_referenced_stage14_charts(
+                run_dir,
+                chart_dir,
+                referenced_chart_files - existing_chart_files,
+            )
+            charts.extend(copied_stage14)
+            if copied_stage14:
+                logger.info(
+                    "%s: Copied %d referenced Stage 14 chart(s)",
+                    label,
+                    len(copied_stage14),
+                )
+            if missing_stage14:
+                logger.warning(
+                    "%s: %d referenced chart(s) not found in stage-14*: %s",
+                    label,
+                    len(missing_stage14),
+                    missing_stage14[:12],
+                )
+
+            from researchclaw.experiment.visualize import generate_all_charts
+
+            metric_direction = getattr(config.experiment, "metric_direction", "minimize")
+            generated_charts = generate_all_charts(
+                run_dir,
+                chart_dir,
+                metric_key=config.experiment.metric_key,
+                metric_direction=metric_direction,
+            )
+            charts.extend(generated_charts)
+            if charts:
+                artifacts.append("charts/")
+                evidence.append(f"{evidence_prefix}/charts/")
+                logger.info("%s: Prepared %d chart artifact(s)", label, len(charts))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s: Chart preparation failed: %s", label, exc)
+
+        try:
+            reconcile_figure_refs(tex_path, stage_dir / "charts")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("%s: Figure path validation skipped: %s", label, exc)
+
+        try:
+            from researchclaw.templates.compiler import remove_missing_figures
+
+            if tex_path.exists():
+                tex_text = tex_path.read_text(encoding="utf-8")
+                fixed_tex, removed_figs = remove_missing_figures(tex_text, stage_dir)
+                if removed_figs:
+                    tex_path.write_text(fixed_tex, encoding="utf-8")
+                    logger.warning(
+                        "%s: Removed %d figure block(s) with missing images: %s",
+                        label,
+                        len(removed_figs),
+                        removed_figs,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("%s: remove_missing_figures skipped: %s", label, exc)
+
+        try:
+            from researchclaw.templates.compiler import compile_latex
+
+            compile_result = compile_latex(tex_path, max_attempts=2, timeout=120)
+            if compile_result.success:
+                compile_ok = True
+                generated_pdf = tex_path.with_suffix(".pdf")
+                output_pdf = stage_dir / output_pdf_name
+                if generated_pdf.exists() and generated_pdf.name != output_pdf_name:
+                    shutil.copy2(generated_pdf, output_pdf)
+                if output_pdf.exists():
+                    artifacts.append(output_pdf_name)
+                    evidence.append(f"{evidence_prefix}/{output_pdf_name}")
+                logger.info("%s: LaTeX compilation verification PASSED", label)
+
+                if llm is not None and output_pdf.exists():
+                    try:
+                        pdf_review = _get_review_compiled_pdf()(
+                            output_pdf,
+                            llm,
+                            config.research.topic,
+                        )
+                        if pdf_review:
+                            (stage_dir / "pdf_review.json").write_text(
+                                json.dumps(pdf_review, indent=2, ensure_ascii=False),
+                                encoding="utf-8",
+                            )
+                            artifacts.append("pdf_review.json")
+                            evidence.append(f"{evidence_prefix}/pdf_review.json")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("%s: PDF review skipped: %s", label, exc)
+
+                if write_quality_report:
+                    try:
+                        from researchclaw.templates.compiler import check_compiled_quality
+
+                        quality = check_compiled_quality(tex_path)
+                        if quality.warnings_summary:
+                            logger.warning(
+                                "%s: Quality checks: %s",
+                                label,
+                                "; ".join(quality.warnings_summary),
+                            )
+                        (stage_dir / "compilation_quality.json").write_text(
+                            json.dumps(
+                                {
+                                    "page_count": quality.page_count,
+                                    "unresolved_refs": quality.unresolved_refs,
+                                    "unresolved_cites": quality.unresolved_cites,
+                                    "overfull_hboxes": len(quality.overfull_hboxes),
+                                    "orphan_figures": quality.orphan_figures,
+                                    "orphan_labels": quality.orphan_labels,
+                                    "warnings": quality.warnings_summary,
+                                },
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                        artifacts.append("compilation_quality.json")
+                        evidence.append(f"{evidence_prefix}/compilation_quality.json")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("%s: Quality checks skipped: %s", label, exc)
+            else:
+                logger.warning(
+                    "%s: LaTeX compilation verification FAILED: %s",
+                    label,
+                    compile_result.errors[:3],
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("%s: Compile verification skipped: %s", label, exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("%s: LaTeX generation failed: %s", label, exc, exc_info=True)
+
+    return artifacts, evidence, compile_ok
 
 
 def _load_stage14_figure_caption_map(run_dir: Path) -> dict[str, str]:
@@ -808,6 +1050,7 @@ def _execute_paper_revision(
                 f'- Keep the paper title EXACTLY as: "{paper_title}"\n'
                 "- Do NOT paraphrase, shorten, expand, or replace the title during revision.\n"
             )
+        submission_rules = _get_shared_submission_rules()(config.export.submission_profile)
         try:
             _ws_revision = _pm.block("writing_structure")
         except (KeyError, Exception):  # noqa: BLE001
@@ -843,7 +1086,7 @@ def _execute_paper_revision(
             topic_constraint=_pm.block("topic_constraint", topic=config.research.topic),
             writing_structure=_ws_revision,
             draft=draft,
-            reviews=title_override + _quality_prefix + reviews + data_integrity_revision,
+            reviews=title_override + submission_rules + _quality_prefix + reviews + data_integrity_revision,
             **_rev_blocks,
         )
         # R10-Fix2: Ensure max_tokens is sufficient for full paper revision
@@ -2550,6 +2793,7 @@ def _execute_export_publish(
             authors=config.export.authors,
             bib_file=config.export.bib_file,
             bib_entries=_ay_map or None,
+            submission_profile=config.export.submission_profile,
         )
         (stage_dir / "paper.tex").write_text(tex_content, encoding="utf-8")
         artifacts.append("paper.tex")
@@ -3091,8 +3335,67 @@ def _remove_bibtex_entries(bib_text: str, keys_to_remove: set[str]) -> str:
     return "\n\n".join(kept) + "\n" if kept else ""
 
 
+def _iter_bibtex_entries(bib_text: str) -> list[tuple[str, str]]:
+    """Return BibTeX entries as ``(key, raw_entry)`` pairs."""
+    entries: list[tuple[str, str]] = []
+    for match in re.finditer(r"@\w+\{([^,]+),", bib_text):
+        key = match.group(1).strip()
+        start = match.start()
+        depth = 0
+        end = start
+        for idx in range(start, len(bib_text)):
+            if bib_text[idx] == "{":
+                depth += 1
+            elif bib_text[idx] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = idx + 1
+                    break
+        if end > start:
+            entries.append((key, bib_text[start:end].strip()))
+    return entries
+
+
+def _select_preferred_bibtex_entry(entries: list[str]) -> str:
+    """Prefer DOI-backed journal entries over arXiv/preprint variants."""
+
+    def _score(entry: str) -> tuple[int, int, int]:
+        lowered = entry.lower()
+        has_doi = int("doi" in lowered)
+        mentions_arxiv = int("arxiv" in lowered or "preprint" in lowered)
+        return (has_doi, -mentions_arxiv, len(entry))
+
+    return max(entries, key=_score)
+
+
+def _dedupe_bibtex_entries(bib_text: str) -> str:
+    """Deduplicate BibTeX entries while preserving the preferred variant."""
+    by_key: dict[str, list[str]] = {}
+    order: list[str] = []
+    for key, entry in _iter_bibtex_entries(bib_text):
+        if key not in by_key:
+            by_key[key] = []
+            order.append(key)
+        by_key[key].append(entry)
+    kept = [_select_preferred_bibtex_entry(by_key[key]) for key in order]
+    return "\n\n".join(kept) + ("\n" if kept else "")
+
+
+def _extract_citation_keys_from_text(text: str) -> set[str]:
+    keys: set[str] = set()
+    for match in re.finditer(r"\\cite[pt]?\{([^}]+)\}", text):
+        keys.update(part.strip() for part in match.group(1).split(",") if part.strip())
+    for match in re.finditer(r"\[([^\[\]]+)\]", text):
+        parts = [part.strip() for part in match.group(1).split(",") if part.strip()]
+        if parts and all(re.fullmatch(r"[A-Za-z][A-Za-z0-9:_\-]*", part) for part in parts):
+            keys.update(parts)
+    return keys
+
+
 def _remove_citations_from_text(text: str, keys_to_remove: set[str]) -> str:
     """Remove \\cite{key} and [key] references for specified citation keys."""
+    if not text or not keys_to_remove:
+        return text
 
     # Handle multi-key LaTeX cites: \cite{a,b,c} → filter keys inside braces
     def _filter_cite(m: re.Match[str]) -> str:
@@ -3100,13 +3403,25 @@ def _remove_citations_from_text(text: str, keys_to_remove: set[str]) -> str:
         kept = [k for k in keys if k not in keys_to_remove]
         if not kept:
             return ""
-        return f"\\cite{{{','.join(kept)}}}"
+        return f"\\cite{{{', '.join(kept)}}}"
 
     text = re.sub(r"\\cite\{([^}]+)\}", _filter_cite, text)
 
-    # Markdown: [key]
-    for key in keys_to_remove:
-        text = re.sub(rf"\[{re.escape(key)}\]", "", text)
+    def _filter_markdown_cluster(m: re.Match[str]) -> str:
+        parts = [part.strip() for part in m.group(1).split(",") if part.strip()]
+        if not parts or not all(re.fullmatch(r"[A-Za-z][A-Za-z0-9:_\-]*", part) for part in parts):
+            return m.group(0)
+        kept = [part for part in parts if part not in keys_to_remove]
+        if not kept:
+            return ""
+        return "[" + ", ".join(kept) + "]"
+
+    text = re.sub(r"\[([^\[\]]+)\]", _filter_markdown_cluster, text)
+    text = re.sub(r"\(\s*\)", "", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"([(\[])\s+", r"\1", text)
+    text = re.sub(r"\s+([)\]])", r"\1", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
     return text
 
 
@@ -3245,6 +3560,7 @@ def _execute_citation_verify(
     # Remove low-relevance entries from BibTeX
     if low_relevance_keys:
         verified_bib = _remove_bibtex_entries(verified_bib, low_relevance_keys)
+    verified_bib = _dedupe_bibtex_entries(verified_bib)
 
     # BUG-26: If verification stripped >50% of entries (e.g. due to rate limiting),
     # fall back to the original bib to avoid breaking the paper's references
@@ -3257,20 +3573,14 @@ def _execute_citation_verify(
             original_count, verified_count,
         )
         verified_bib = bib_text
+    verified_bib = _dedupe_bibtex_entries(verified_bib)
 
     # IMP-1: Also prune uncited entries from verified bib
     # BUG-182: Also scan LaTeX paper.tex (not just Markdown) for \cite{} keys.
     # The Markdown version may use [key] notation while LaTeX uses \cite{key}.
     if paper_text.strip():
         _vbib_keys = set(re.findall(r"@\w+\{([^,]+),", verified_bib))
-        _cited_in_paper: set[str] = set()
-        _cited_in_paper.update(
-            re.findall(r"\[([a-zA-Z]+\d{4}[a-zA-Z0-9_-]*)\]", paper_text)
-        )
-        for _cm in re.finditer(r"\\cite\{([^}]+)\}", paper_text):
-            _cited_in_paper.update(
-                k.strip() for k in _cm.group(1).split(",")
-            )
+        _cited_in_paper: set[str] = set(_extract_citation_keys_from_text(paper_text))
         # BUG-182: Also read stage-22/paper.tex for \cite{} keys
         _latex_paper = stage_dir.parent / "stage-22" / "paper.tex"
         if _latex_paper.exists():
@@ -3309,6 +3619,16 @@ def _execute_citation_verify(
         # Remove \cite{} and [cite_key] references for low-relevance entries
         if low_relevance_keys:
             annotated = _remove_citations_from_text(annotated, low_relevance_keys)
+        verified_keys = set(re.findall(r"@\w+\{([^,]+),", verified_bib))
+        orphan_keys = _extract_citation_keys_from_text(annotated) - verified_keys
+        if orphan_keys:
+            annotated = _remove_citations_from_text(annotated, orphan_keys)
+        cited_after_cleanup = _extract_citation_keys_from_text(annotated)
+        uncited_verified = verified_keys - cited_after_cleanup
+        if uncited_verified:
+            verified_bib = _remove_bibtex_entries(verified_bib, uncited_verified)
+            verified_bib = _dedupe_bibtex_entries(verified_bib)
+            (stage_dir / "references_verified.bib").write_text(verified_bib, encoding="utf-8")
         (stage_dir / "paper_final_verified.md").write_text(annotated, encoding="utf-8")
         artifacts.append("paper_final_verified.md")
 

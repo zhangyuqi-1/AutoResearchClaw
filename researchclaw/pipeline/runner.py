@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time as _time
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 from researchclaw.adapters import AdapterBundle
@@ -944,6 +945,7 @@ def _package_deliverables(
                 title=_extract_paper_title(v_text),
                 authors=config.export.authors,
                 bib_file=config.export.bib_file,
+                submission_profile=config.export.submission_profile,
             )
             # IMP-17: Quality check — ensure regenerated LaTeX has
             # proper structure (abstract, multiple sections)
@@ -1227,14 +1229,11 @@ def _package_stage24_deliverables(
         shutil.copy2(sanitization_src, dest / "sanitization_report.json")
         packaged.append("sanitization_report.json")
 
-    for style_src in sorted((run_dir / "stage-22").glob("*.sty")):
-        if style_src.is_file():
-            shutil.copy2(style_src, dest / style_src.name)
-            packaged.append(style_src.name)
-    for style_src in sorted((run_dir / "stage-22").glob("*.bst")):
-        if style_src.is_file():
-            shutil.copy2(style_src, dest / style_src.name)
-            packaged.append(style_src.name)
+    for pattern in ("*.sty", "*.bst", "*.cls"):
+        for style_src in sorted((run_dir / "stage-22").glob(pattern)):
+            if style_src.is_file():
+                shutil.copy2(style_src, dest / style_src.name)
+                packaged.append(style_src.name)
 
     optional_files = {
         "codex_review.json": stage24_dir / "codex_review.json",
@@ -1281,14 +1280,11 @@ def _package_stage24_deliverables(
         logger.debug("Stage-24 deliverables archive title extraction failed")
 
     archive_path = run_dir / f"{archive_stem}.zip"
-    if archive_path.exists():
-        archive_path.unlink()
-    with zipfile.ZipFile(
-        archive_path, "w", compression=zipfile.ZIP_DEFLATED
-    ) as zf:
-        for path in sorted(dest.rglob("*")):
-            if path.is_file():
-                zf.write(path, arcname=path.relative_to(run_dir))
+    _write_stage24_submission_archive(
+        run_dir=run_dir,
+        dest=dest,
+        archive_path=archive_path,
+    )
 
     logger.info(
         "Stage-24 deliverables packaged: %s (%d items), archive=%s",
@@ -1297,6 +1293,89 @@ def _package_stage24_deliverables(
         archive_path,
     )
     return dest
+
+
+def _iter_filtered_files(
+    src: Path,
+    *,
+    include_file: Callable[[Path], bool] | None = None,
+) -> list[Path]:
+    files: list[Path] = []
+    for path in sorted(src.rglob("*")):
+        if not path.is_file():
+            continue
+        if include_file is not None and not include_file(path):
+            continue
+        files.append(path)
+    return files
+
+
+def _is_submission_chart_asset(path: Path) -> bool:
+    suffix = path.suffix.lower()
+    name = path.name.lower()
+    return suffix not in {".md", ".markdown"} and "prompt" not in name
+
+
+def _select_submission_data_dir(run_dir: Path) -> Path | None:
+    candidates = (
+        run_dir / "stage-24" / "data",
+        run_dir / "stage-24" / "dataset",
+        run_dir / "stage-22" / "data",
+        run_dir / "stage-22" / "dataset",
+        run_dir / "stage-22" / "code" / "data",
+        run_dir / "stage-22" / "code" / "dataset",
+    )
+    for candidate in candidates:
+        if candidate.is_dir() and any(path.is_file() for path in candidate.rglob("*")):
+            return candidate
+    return None
+
+
+def _submission_data_readme_text() -> str:
+    return (
+        "# Data Bundle\n\n"
+        "This run did not produce a redistributable dataset copy inside the run directory.\n\n"
+        "To reproduce the dataset, use `code/setup.py` and write any prepared data "
+        "under the writable root given by `RC_DATA_DIR`.\n"
+    )
+
+
+def _write_stage24_submission_archive(
+    *,
+    run_dir: Path,
+    dest: Path,
+    archive_path: Path,
+) -> None:
+    if archive_path.exists():
+        archive_path.unlink()
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name in ("paper.tex", "paper.pdf", "paper_final.docx", "references.bib"):
+            zf.write(dest / name, arcname=name)
+
+        for suffix in (".sty", ".bst", ".cls"):
+            for style_src in sorted(dest.glob(f"*{suffix}")):
+                if style_src.is_file():
+                    zf.write(style_src, arcname=style_src.name)
+
+        charts_src = dest / "charts"
+        if charts_src.is_dir():
+            for path in _iter_filtered_files(
+                charts_src,
+                include_file=_is_submission_chart_asset,
+            ):
+                zf.write(path, arcname=Path("charts") / path.relative_to(charts_src))
+
+        code_src = dest / "code"
+        if code_src.is_dir():
+            for path in _iter_filtered_files(code_src):
+                zf.write(path, arcname=Path("code") / path.relative_to(code_src))
+
+        data_src = _select_submission_data_dir(run_dir)
+        if data_src is not None:
+            for path in _iter_filtered_files(data_src):
+                zf.write(path, arcname=Path("data") / path.relative_to(data_src))
+        else:
+            zf.writestr("data/README.md", _submission_data_readme_text())
 
 
 def _version_rollback_stages(

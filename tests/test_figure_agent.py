@@ -340,6 +340,14 @@ class TestCodeGenAgent:
         assert len(scripts) == 1
         assert "imshow" in scripts[0]["script"]
 
+    def test_line_and_scatter_templates_place_legends_outside_plot(self):
+        from researchclaw.agents.figure_agent import codegen as figure_codegen
+
+        assert "bbox_to_anchor=(1.02, 1)" in figure_codegen._TEMPLATE_LINE_MULTI
+        assert "bbox_to_anchor=(1.02, 1)" in figure_codegen._TEMPLATE_SCATTER
+        assert "loc=\"best\"" not in figure_codegen._TEMPLATE_LINE_MULTI
+        assert "loc=\"best\"" not in figure_codegen._TEMPLATE_SCATTER
+
     def test_llm_fallback_for_unknown_type(self):
         from researchclaw.agents.figure_agent.codegen import CodeGenAgent
         llm = _FakeLLM("```python\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1,2,3])\nfig.savefig('charts/fig_custom.png')\nplt.close(fig)\n```")
@@ -669,7 +677,7 @@ class TestIntegratorAgent:
             },
         ]
         refs = agent._generate_markdown_refs(manifest)
-        assert "![Figure 1:" in refs
+        assert "![Main results comparison]" in refs
         assert "charts/fig_1.png" in refs
 
     def test_generate_descriptions(self):
@@ -849,7 +857,7 @@ class TestFigureAgentConfig:
         from researchclaw.config import FigureAgentConfig
         cfg = FigureAgentConfig()
         assert cfg.enabled is True
-        assert cfg.min_figures == 3
+        assert cfg.min_figures == 4
         assert cfg.max_figures == 8
         assert cfg.max_iterations == 3
         assert cfg.dpi == 300
@@ -889,7 +897,7 @@ class TestFigureAgentConfig:
         from researchclaw.config import _parse_figure_agent_config
         cfg = _parse_figure_agent_config({})
         assert cfg.enabled is True
-        assert cfg.min_figures == 3
+        assert cfg.min_figures == 4
 
     def test_experiment_config_has_figure_agent(self):
         from researchclaw.config import ExperimentConfig
