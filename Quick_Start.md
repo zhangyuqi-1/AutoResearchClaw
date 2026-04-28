@@ -45,4 +45,5 @@ set -a && source .env && set +a && researchclaw run --config config2.arc.yaml --
 set -a && source .env && set +a && researchclaw run --config config2.arc.yaml --output artifacts/rc-20260409-184727-b50802 --from-stage EXPORT_PUBLISH --auto-approve
 # 从 Stage 24 重跑命令：
 set -a && source .env && set +a && researchclaw run --config config2.arc.yaml --output artifacts/rc-20260409-184727-b50802 --from-stage FINAL_EDITORIAL_REPAIR --auto-approve
+set -a && source .env && set +a && researchclaw run --config config2.arc.yaml --resume --from-stage FINAL_EDITORIAL_REPAIR --auto-approve
 ```
