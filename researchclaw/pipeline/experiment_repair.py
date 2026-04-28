@@ -154,6 +154,19 @@ def build_repair_prompt(
             # Extract package name from description
             sections.append(f"- {d.description}")
 
+    if experiment_plan and isinstance(experiment_plan, dict):
+        datasets = experiment_plan.get("datasets")
+        if isinstance(datasets, list) and datasets:
+            sections.append("\n## EXPECTED DATASETS\n")
+            sections.append(
+                "Use ONLY these intended benchmark datasets (or their local caches):\n"
+            )
+            for dataset in datasets:
+                sections.append(f"- {dataset}")
+            sections.append(
+                "Do NOT substitute a different dataset just to keep the run alive.\n"
+            )
+
     # Original code
     sections.append("\n## CURRENT CODE (fix in-place)\n")
     for filename, content in sorted(original_code.items()):
@@ -167,6 +180,8 @@ def build_repair_prompt(
         f"\n## CONSTRAINTS\n"
         f"- Time budget: {time_budget_sec} seconds total\n"
         f"- Pre-cached datasets: CIFAR-10, CIFAR-100, MNIST, FashionMNIST, STL-10 at /opt/datasets\n"
+        f"- For downloadable datasets, use setup.py + os.environ['RC_DATA_DIR'] / HF_DATASETS_CACHE / SKLEARN_HOME\n"
+        f"- Never replace the target dataset with breast_cancer, wine, or another unrelated fallback dataset\n"
         f"- Every condition MUST output: condition=CONDNAME metric=VALUE\n"
         f"- The code must run without errors for at least 1 seed per condition\n"
     )

@@ -151,7 +151,7 @@ def _execute_code_generation(
         _net_policy = (
             config.experiment.docker.network_policy
             if config.experiment.mode == "docker"
-            else "none"  # sandbox mode has no network
+            else config.experiment.sandbox.network_policy
         )
         if _net_policy == "none":
             # Network disabled: inject strict offline-only guidance
@@ -787,6 +787,8 @@ def _execute_code_generation(
         auto_fix_unbound_locals,
         check_code_complexity,
         deep_validate_files,
+        format_issues_for_llm,
+        validate_project_files,
     )
 
     # --- BUG-3 fix: Programmatic auto-fix for UnboundLocalError patterns ---
@@ -1302,9 +1304,50 @@ def _execute_code_generation(
         except Exception as exc:
             logger.debug("Ablation validation skipped: %s", exc)
 
+    # --- Project-level validation: dataset contract + local import semantics ---
+    project_validation = validate_project_files(files)
+    if project_validation.issues:
+        validation_log.append(
+            "Project validation: " + format_issues_for_llm(project_validation)
+        )
+        for issue in project_validation.issues:
+            logger.error("Stage 10 project validation: %s", issue.message)
+
+    # --- Direct-entry smoke check for flat projects without setup phases ---
+    smoke_error = ""
+    if "setup.py" not in files and "requirements.txt" not in files:
+        try:
+            from researchclaw.experiment.sandbox import ExperimentSandbox
+
+            for fname, code in files.items():
+                (exp_dir / fname).write_text(code, encoding="utf-8")
+            smoke_sandbox = ExperimentSandbox(
+                config.experiment.sandbox,
+                stage_dir / "_smoke_validation",
+            )
+            smoke_timeout = max(
+                3,
+                min(15, config.experiment.code_agent.exec_fix_timeout_sec),
+            )
+            smoke_result = smoke_sandbox.run_project(
+                exp_dir,
+                timeout_sec=smoke_timeout,
+            )
+            if smoke_result.returncode != 0 and smoke_result.stderr.strip():
+                smoke_error = smoke_result.stderr.strip().splitlines()[-1]
+                validation_log.append(f"Smoke validation failed: {smoke_error}")
+                logger.error("Stage 10 smoke validation failed: %s", smoke_error)
+        except Exception as exc:
+            smoke_error = str(exc)
+            validation_log.append(f"Smoke validation exception: {smoke_error}")
+            logger.error("Stage 10 smoke validation exception: %s", smoke_error)
+
     # --- Write spec ---
     file_list = ", ".join(f"`{f}`" for f in sorted(files.keys()))
     main_validation = validate_code(files.get("main.py", ""))
+    validation_summary = main_validation.summary()
+    if project_validation.issues:
+        validation_summary += f" Project validation: {project_validation.summary()}"
     _align_status = "ALIGNED" if alignment_ok else f"MISALIGNED: {alignment_note}"
     spec = f"""# Experiment Specification
 
@@ -1327,8 +1370,9 @@ Multi-file experiment project with {len(files)} file(s): {file_list}
 ## Constraints
 - Time budget per run: {config.experiment.time_budget_sec}s
 - Max iterations: {config.experiment.max_iterations}
-- Self-contained execution (no external data, no network)
-- Validated: {main_validation.summary()}
+- Execution profile: {config.experiment.mode} mode with network_policy={_net_policy}
+- External data is allowed only through the configured setup/data workflow
+- Validated: {validation_summary}
 
 ## Generated
 {_utcnow_iso()}
@@ -1355,10 +1399,25 @@ Multi-file experiment project with {len(files)} file(s): {file_list}
             error=f"Topic-experiment misalignment: {alignment_note}",
         )
 
+    if project_validation.errors or smoke_error:
+        error_parts: list[str] = []
+        if project_validation.errors:
+            error_parts.append(format_issues_for_llm(project_validation))
+        if smoke_error:
+            error_parts.append(f"Direct entry smoke validation failed: {smoke_error}")
+        error_text = "\n".join(error_parts)
+        logger.error("Stage 10: Project validation failed. %s", error_text)
+        return StageResult(
+            stage=Stage.CODE_GENERATION,
+            status=StageStatus.FAILED,
+            artifacts=tuple(artifacts),
+            evidence_refs=tuple(f"stage-10/{a}" for a in artifacts),
+            error=error_text,
+        )
+
     return StageResult(
         stage=Stage.CODE_GENERATION,
         status=StageStatus.DONE,
         artifacts=tuple(artifacts),
         evidence_refs=tuple(f"stage-10/{a}" for a in artifacts),
     )
-

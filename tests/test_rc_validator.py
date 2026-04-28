@@ -14,6 +14,7 @@ from researchclaw.experiment.validator import (
     format_issues_for_llm,
     validate_code,
     validate_imports,
+    validate_project_files,
     validate_security,
     validate_syntax,
 )
@@ -321,6 +322,103 @@ def test_code_validation_errors_and_warnings_filter_correctly():
 
     assert validation.errors == [err]
     assert validation.warnings == [warn]
+
+
+def test_validate_project_files_rejects_root_relative_imports():
+    validation = validate_project_files(
+        {
+            "main.py": "from .runner import run\nrun()\n",
+            "runner.py": "def run():\n    return 1\n",
+        }
+    )
+
+    assert any("uses relative imports" in issue.message for issue in validation.errors)
+
+
+def test_validate_project_files_allows_package_relative_imports_in_init_py():
+    validation = validate_project_files(
+        {
+            "__init__.py": "from .runner import run\n",
+            "main.py": "from runner import run\nrun()\n",
+            "runner.py": "def run():\n    return 1\n",
+        }
+    )
+
+    assert not any(
+        issue.category == "import" and "__init__.py" in issue.message
+        for issue in validation.errors
+    )
+
+
+def test_validate_project_files_requires_setup_for_downloadable_datasets():
+    validation = validate_project_files(
+        {
+            "main.py": (
+                "from datasets import load_dataset\n"
+                "load_dataset('scikit-learn/adult-census-income')\n"
+            )
+        }
+    )
+
+    assert any("does not include setup.py" in issue.message for issue in validation.errors)
+
+
+def test_validate_project_files_requires_setup_for_fetch_covtype_offline_contract():
+    validation = validate_project_files(
+        {
+            "main.py": (
+                "from sklearn.datasets import fetch_covtype\n"
+                "fetch_covtype(download_if_missing=False, as_frame=True)\n"
+            )
+        }
+    )
+
+    assert any("does not include setup.py" in issue.message for issue in validation.errors)
+
+
+def test_validate_project_files_rejects_hardcoded_workspace_data_root():
+    validation = validate_project_files(
+        {
+            "main.py": (
+                "DATA_ROOT = '/workspace/data'\n"
+                "print(DATA_ROOT)\n"
+            )
+        }
+    )
+
+    assert any("/workspace/data" in issue.message for issue in validation.errors)
+
+
+def test_validate_project_files_rejects_dataset_substitution_fallbacks():
+    validation = validate_project_files(
+        {
+            "data.py": (
+                "from sklearn.datasets import load_breast_cancer\n"
+                "print('using wine fallback for covtype')\n"
+                "load_breast_cancer()\n"
+            )
+        }
+    )
+
+    assert any("dataset substitution fallback logic" in issue.message for issue in validation.errors)
+
+
+def test_validate_project_files_accepts_setup_py_using_rc_data_dir():
+    validation = validate_project_files(
+        {
+            "setup.py": (
+                "import os\n"
+                "from pathlib import Path\n"
+                "Path(os.environ['RC_DATA_DIR']).mkdir(parents=True, exist_ok=True)\n"
+            ),
+            "main.py": (
+                "from datasets import load_dataset\n"
+                "load_dataset('scikit-learn/adult-census-income')\n"
+            ),
+        }
+    )
+
+    assert validation.errors == []
 
 
 def test_code_validation_summary_for_no_issues():

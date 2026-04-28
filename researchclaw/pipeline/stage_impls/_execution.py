@@ -176,11 +176,23 @@ def _execute_experiment_run(
 
         # Determine run status: completed / partial (timed out with data) / failed
         # R6-2: Detect stdout failure signals even when exit code is 0
+        _combined_output = (result.stdout or "") + "\n" + (result.stderr or "")
+        _dataset_substitution = bool(
+            re.search(
+                r"(?:DATA_WARNING:.*fallback|using .* fallback for|"
+                r"load_breast_cancer|load_wine)",
+                _combined_output,
+                re.IGNORECASE,
+            )
+        )
         _stdout_has_failure = bool(
             result.stdout
-            and not effective_metrics
+            and (
+                _dataset_substitution
+                or not effective_metrics
+            )
             and any(
-                sig in result.stdout
+                sig in _combined_output
                 for sig in ("FAIL:", "NaN/divergence", "Traceback (most recent")
             )
         )
@@ -198,6 +210,11 @@ def _execute_experiment_run(
                 logger.warning(
                     "Experiment exited cleanly but stdout contains failure signals"
                 )
+        if _dataset_substitution:
+            run_status = "failed"
+            logger.warning(
+                "Stage 12: dataset substitution fallback detected in experiment output"
+            )
 
         # P1: Warn if experiment completed suspiciously fast (trivially easy benchmark)
         if run_status == "completed" and result.elapsed_sec and result.elapsed_sec < 5.0:

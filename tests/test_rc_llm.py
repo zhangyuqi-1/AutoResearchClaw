@@ -425,6 +425,47 @@ def test_acp_command_line_too_long_falls_back_to_file_transport():
     assert call_count == 1
 
 
+def test_acp_queue_owner_disconnected_reconnects_and_retries():
+    from researchclaw.llm.acp_client import ACPClient, ACPConfig
+
+    client = ACPClient(ACPConfig(agent="codex"))
+    client._acpx = "acpx"
+    client._session_ready = True
+    client._ensure_session = lambda: None  # type: ignore[assignment]
+
+    reconnects = 0
+    calls = 0
+
+    def fake_reconnect() -> None:
+        nonlocal reconnects
+        reconnects += 1
+
+    def flaky_file_transport(acpx: str, prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError(
+                "ACP prompt failed (exit 1): [acpx] session researchclaw · "
+                "agent connected\nQueue owner disconnected before prompt completion"
+            )
+        return "ok-after-reconnect"
+
+    client._force_reconnect = fake_reconnect  # type: ignore[assignment]
+    client._send_prompt_via_file = flaky_file_transport  # type: ignore[assignment]
+    client._send_prompt_cli = lambda acpx, prompt: "unexpected-cli"  # type: ignore[assignment]
+    original_limit = ACPClient._MAX_CLI_PROMPT_BYTES
+    ACPClient._MAX_CLI_PROMPT_BYTES = 10
+
+    try:
+        result = client._send_prompt("x" * 11)
+    finally:
+        ACPClient._MAX_CLI_PROMPT_BYTES = original_limit
+
+    assert result == "ok-after-reconnect"
+    assert reconnects == 1
+    assert calls == 2
+
+
 def test_acp_windows_cmd_wrapper_uses_lower_inline_limit(monkeypatch: pytest.MonkeyPatch):
     from researchclaw.llm.acp_client import ACPClient
 

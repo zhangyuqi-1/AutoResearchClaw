@@ -54,3 +54,24 @@ def test_ensure_sandbox_deps_disables_proxy_only_for_pip(monkeypatch: pytest.Mon
     ):
         assert key not in pip_env
     assert "PIP_CONFIG_FILE" not in pip_env
+
+
+def test_extract_multi_file_blocks_keeps_support_files() -> None:
+    content = """```filename:main.py
+print("metric: 1.0")
+```
+
+```filename:setup.py
+print("prepare data")
+```
+
+```filename:requirements.txt
+datasets
+scikit-learn
+```"""
+
+    files = _helpers._extract_multi_file_blocks(content)
+
+    assert files["main.py"] == 'print("metric: 1.0")'
+    assert files["setup.py"] == 'print("prepare data")'
+    assert files["requirements.txt"] == "datasets\nscikit-learn"

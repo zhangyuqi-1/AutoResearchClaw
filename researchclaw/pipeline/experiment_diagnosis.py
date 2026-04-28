@@ -30,12 +30,14 @@ class DeficiencyType(enum.Enum):
     INSUFFICIENT_SEEDS = "few_seeds"
     TIME_GUARD_DOMINANT = "time_guard"
     SYNTHETIC_DATA_FALLBACK = "synthetic_data"
+    DATASET_SUBSTITUTION = "dataset_substitution"
     CODE_CRASH = "code_crash"
     MISSING_DEPENDENCY = "missing_dep"
     HYPERPARAMETER_ISSUE = "bad_hyperparams"
     IDENTICAL_CONDITIONS = "identical_conditions"
     PERMISSION_ERROR = "permission_error"
     DATASET_UNAVAILABLE = "dataset_unavailable"
+    SETUP_PHASE_MISSING = "setup_phase_missing"
     GPU_OOM = "gpu_oom"
 
 
@@ -195,7 +197,14 @@ def _select_paper_mode(
 ) -> PaperMode:
     """Select paper mode based on experiment quality."""
     # Check for synthetic data
-    if any(d.type == DeficiencyType.SYNTHETIC_DATA_FALLBACK for d in diagnosis.deficiencies):
+    if any(
+        d.type in (
+            DeficiencyType.SYNTHETIC_DATA_FALLBACK,
+            DeficiencyType.DATASET_SUBSTITUTION,
+            DeficiencyType.SETUP_PHASE_MISSING,
+        )
+        for d in diagnosis.deficiencies
+    ):
         return PaperMode.TECHNICAL_REPORT
 
     # Check for no conditions
@@ -296,25 +305,28 @@ def diagnose_experiment(
     # 5. Synthetic data fallback
     _check_synthetic_data(diag, combined_output)
 
-    # 6. Dataset unavailability
+    # 6. Dataset substitution fallback
+    _check_dataset_substitution(diag, combined_output)
+
+    # 7. Dataset unavailability / missing setup phase
     _check_dataset_issues(diag, combined_output)
 
-    # 7. Code crashes
+    # 8. Code crashes
     _check_code_crashes(diag, stderr, combined_output)
 
-    # 8. Hyperparameter issues
+    # 9. Hyperparameter issues
     _check_hyperparams(diag, combined_output, experiment_summary)
 
-    # 9. Identical conditions
+    # 10. Identical conditions
     _check_identical_conditions(diag, experiment_summary)
 
-    # 10. Insufficient seeds
+    # 11. Insufficient seeds
     _check_insufficient_seeds(diag, experiment_summary)
 
-    # 11. Near-random accuracy (BUG-204)
+    # 12. Near-random accuracy (BUG-204)
     _check_near_random_accuracy(diag, experiment_summary)
 
-    # 12. No conditions at all
+    # 13. No conditions at all
     if not completed_conditions:
         diag.deficiencies.append(Deficiency(
             type=DeficiencyType.NO_CONDITIONS_COMPLETED,
@@ -438,7 +450,6 @@ def _check_synthetic_data(diag: ExperimentDiagnosis, output: str) -> None:
         r"using synthetic data",
         r"synthetic.*?fallback",
         r"random.*?tokens",
-        r"WARNING.*?load failed.*?using",
     ]
     for pat in patterns:
         if re.search(pat, output, re.IGNORECASE):
@@ -456,8 +467,53 @@ def _check_synthetic_data(diag: ExperimentDiagnosis, output: str) -> None:
             break
 
 
+def _check_dataset_substitution(diag: ExperimentDiagnosis, output: str) -> None:
+    """Detect replacement of the intended dataset with an unrelated fallback."""
+    patterns = [
+        r"DATA_WARNING:.*fallback",
+        r"using .* fallback for",
+        r"load_breast_cancer",
+        r"load_wine",
+    ]
+    for pat in patterns:
+        if re.search(pat, output, re.IGNORECASE):
+            diag.deficiencies.append(Deficiency(
+                type=DeficiencyType.DATASET_SUBSTITUTION,
+                severity="critical",
+                description=(
+                    "Experiment substituted a different dataset instead of loading "
+                    "the intended benchmark."
+                ),
+                error_message=_extract_context(output, pat),
+                suggested_fix=(
+                    "Remove the substitution fallback. Prepare the intended dataset "
+                    "in setup.py, cache it under RC_DATA_DIR/HF_DATASETS_CACHE/"
+                    "SKLEARN_HOME, and raise RuntimeError if the expected dataset "
+                    "is still unavailable."
+                ),
+            ))
+            break
+
+
 def _check_dataset_issues(diag: ExperimentDiagnosis, output: str) -> None:
     """Detect dataset loading failures."""
+    if re.search(
+        r"setup\.py.*required|forbids requirements\.txt/setup\.py|"
+        r"does not include setup\.py",
+        output,
+        re.IGNORECASE,
+    ):
+        diag.deficiencies.append(Deficiency(
+            type=DeficiencyType.SETUP_PHASE_MISSING,
+            severity="critical",
+            description="Downloadable dataset workflow is missing setup.py or a setup phase.",
+            error_message=_extract_context(output, r"setup\.py"),
+            suggested_fix=(
+                "Add a setup.py that prepares the intended dataset under "
+                "os.environ['RC_DATA_DIR'], then keep main.py strictly offline."
+            ),
+        ))
+        return
     patterns = [
         (r"FileNotFoundError.*?(?:dataset|data|csv|json)", "Dataset file not found"),
         (r"No such file.*?(?:dataset|data|train|test)", "Dataset path does not exist"),
@@ -663,6 +719,9 @@ def _get_completed_conditions(summary: dict) -> set[str]:
 def _extract_stdout(summary: dict, ref_log: dict | None) -> str:
     """Extract combined stdout from experiment artifacts."""
     parts: list[str] = []
+    top_level_stdout = summary.get("stdout", "")
+    if top_level_stdout:
+        parts.append(top_level_stdout)
     # From best_run
     stdout = summary.get("best_run", {}).get("stdout", "")
     if stdout:
@@ -682,6 +741,9 @@ def _extract_stdout(summary: dict, ref_log: dict | None) -> str:
 def _extract_stderr(summary: dict, ref_log: dict | None) -> str:
     """Extract combined stderr from experiment artifacts."""
     parts: list[str] = []
+    top_level_stderr = summary.get("stderr", "")
+    if top_level_stderr:
+        parts.append(top_level_stderr)
     stderr = summary.get("best_run", {}).get("stderr", "")
     if stderr:
         parts.append(stderr)

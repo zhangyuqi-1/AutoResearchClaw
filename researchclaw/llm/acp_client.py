@@ -282,7 +282,8 @@ class ACPClient:
     _RECONNECT_ERRORS = (
         "agent needs reconnect",
         "session not found",
-        "Query closed",
+        "query closed",
+        "queue owner disconnected",
     )
     _MAX_RECONNECT_ATTEMPTS = 2
 
@@ -363,7 +364,7 @@ class ACPClient:
                     )
                     use_file = True
                     return self._send_prompt_via_file(acpx, prompt)
-                if not any(pat in str(exc) for pat in self._RECONNECT_ERRORS):
+                if not any(pat in exc_lower for pat in self._RECONNECT_ERRORS):
                     raise
                 last_exc = exc
                 if attempt < self._MAX_RECONNECT_ATTEMPTS:

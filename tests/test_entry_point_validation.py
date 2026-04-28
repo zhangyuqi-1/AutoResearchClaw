@@ -110,10 +110,14 @@ class TestValidateEntryPointResolved:
 class TestExperimentSandboxEntryPointValidation:
     """Verify validation is wired into ExperimentSandbox.run_project()."""
 
-    def _make_sandbox(self, tmp_path: Path) -> ExperimentSandbox:
+    def _make_sandbox(
+        self,
+        tmp_path: Path,
+        **sandbox_overrides: object,
+    ) -> ExperimentSandbox:
         from researchclaw.config import SandboxConfig
 
-        cfg = SandboxConfig(python_path=sys.executable)
+        cfg = SandboxConfig(python_path=sys.executable, **sandbox_overrides)
         return ExperimentSandbox(cfg, tmp_path / "work")
 
     def test_rejects_path_traversal(self, tmp_path: Path) -> None:
@@ -188,3 +192,73 @@ class TestExperimentSandboxEntryPointValidation:
 
         assert result.returncode == 0
         assert result.metrics.get("metric") == 1.0
+
+    def test_run_project_executes_setup_before_main_with_shared_data_root(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "setup.py").write_text(
+            "\n".join(
+                [
+                    "from __future__ import annotations",
+                    "import os",
+                    "from pathlib import Path",
+                    "",
+                    "data_root = Path(os.environ['RC_DATA_DIR'])",
+                    "data_root.mkdir(parents=True, exist_ok=True)",
+                    "(data_root / 'dataset_ready.txt').write_text('ready', encoding='utf-8')",
+                    "print('DATASET_READY: dataset_ready.txt')",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (project / "main.py").write_text(
+            "\n".join(
+                [
+                    "from __future__ import annotations",
+                    "import os",
+                    "from pathlib import Path",
+                    "",
+                    "marker = Path(os.environ['RC_DATA_DIR']) / 'dataset_ready.txt'",
+                    "if not marker.exists():",
+                    "    raise SystemExit('setup marker missing')",
+                    "print('DATASET_LOAD: dataset_ready.txt')",
+                    "print('metric: 1.0')",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        sandbox = self._make_sandbox(tmp_path, data_root="shared-data")
+        result = sandbox.run_project(project, timeout_sec=10)
+
+        assert result.returncode == 0
+        assert result.metrics.get("metric") == 1.0
+        assert "[phase-1-setup stdout]" in result.stdout
+        assert "DATASET_READY: dataset_ready.txt" in result.stdout
+        assert "DATASET_LOAD: dataset_ready.txt" in result.stdout
+
+        project_dirs = list((tmp_path / "work").glob("_project_*"))
+        assert project_dirs
+        staged_project = project_dirs[0]
+        assert (staged_project / "shared-data" / "dataset_ready.txt").exists()
+        assert (staged_project / "phase-1-setup.stdout.log").exists()
+
+    @pytest.mark.parametrize("filename", ["setup.py", "requirements.txt"])
+    def test_network_none_rejects_setup_or_requirements_phase(
+        self, tmp_path: Path, filename: str
+    ) -> None:
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "main.py").write_text("print('metric: 1.0')\n", encoding="utf-8")
+        if filename == "setup.py":
+            (project / filename).write_text("print('prepare')\n", encoding="utf-8")
+        else:
+            (project / filename).write_text("numpy\n", encoding="utf-8")
+
+        sandbox = self._make_sandbox(tmp_path, network_policy="none")
+        result = sandbox.run_project(project, timeout_sec=10)
+
+        assert result.returncode == -1
+        assert "network_policy='none'" in result.stderr

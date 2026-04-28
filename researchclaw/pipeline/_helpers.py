@@ -655,6 +655,24 @@ def _extract_multi_file_blocks(content: str) -> dict[str, str]:
 
     if matches:
         files: dict[str, str] = {}
+        allowed_support_files = {
+            "requirements.txt",
+            "pyproject.toml",
+            "setup.cfg",
+            "environment.yml",
+            "environment.yaml",
+        }
+        allowed_suffixes = (
+            ".py",
+            ".txt",
+            ".md",
+            ".json",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".cfg",
+            ".ini",
+        )
         for fname, code in matches:
             fname = fname.strip()
             # Security: prevent path traversal
@@ -662,7 +680,9 @@ def _extract_multi_file_blocks(content: str) -> dict[str, str]:
                 continue
             # Normalise to flat filenames (strip leading ./ or subdirs for safety)
             fname = fname.replace("\\", "/").split("/")[-1]
-            if fname and fname.endswith(".py"):
+            if fname and (
+                fname in allowed_support_files or fname.endswith(allowed_suffixes)
+            ):
                 files[fname] = code.strip()
         if files:
             # Ensure there is a main.py entry point

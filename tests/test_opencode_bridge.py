@@ -181,6 +181,23 @@ class TestOpenCodeBridge:
         assert "Test topic" in guidance
         assert "accuracy" in guidance
 
+    def test_collect_files_includes_nested_support_files(self, tmp_path: Path):
+        bridge = OpenCodeBridge(model="gpt-5.2")
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        (workspace / "src").mkdir()
+        (workspace / "src" / "main.py").write_text("print('ok')", encoding="utf-8")
+        (workspace / "src" / "setup.py").write_text("print('setup')", encoding="utf-8")
+        (workspace / "src" / "requirements.txt").write_text(
+            "datasets\nscikit-learn\n", encoding="utf-8"
+        )
+
+        files = bridge._collect_files(workspace)
+
+        assert files["main.py"] == "print('ok')"
+        assert files["setup.py"] == "print('setup')"
+        assert files["requirements.txt"] == "datasets\nscikit-learn"
+
     def test_opencode_config_azure_format(self, tmp_path):
         bridge = OpenCodeBridge(
             model="gpt-5.2",
@@ -382,6 +399,49 @@ class TestOpenCodeBridge:
 
         assert success is True
         assert run_mock.call_args.args[0][0].endswith("opencode.cmd")
+
+    def test_invoke_opencode_auto_approves_permissions(self, tmp_path):
+        bridge = OpenCodeBridge(model="gpt-5.2", timeout_sec=10)
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "{}"
+        mock_result.stderr = ""
+
+        with patch(
+            "researchclaw.pipeline.opencode_bridge.shutil.which",
+            return_value="/usr/bin/opencode",
+        ), patch(
+            "researchclaw.pipeline.opencode_bridge.subprocess.run",
+            return_value=mock_result,
+        ) as run_mock:
+            success, _log, _elapsed = bridge._invoke_opencode(tmp_path, "test prompt")
+
+        assert success is True
+        cmd = run_mock.call_args.args[0]
+        assert "--dangerously-skip-permissions" in cmd
+
+    def test_generate_preserves_debug_artifacts_when_success_has_no_files(self, tmp_path):
+        bridge = OpenCodeBridge(max_retries=0, workspace_cleanup=True)
+
+        def fake_invoke(workspace, prompt):
+            return True, "model said done", 3.0
+
+        with patch.object(OpenCodeBridge, "check_available", return_value=True), \
+             patch.object(bridge, "_invoke_opencode", side_effect=fake_invoke):
+            result = bridge.generate(
+                stage_dir=tmp_path,
+                topic="test",
+                exp_plan="plan",
+                metric="acc",
+            )
+
+        assert result.success is False
+        assert "No main.py" in result.error
+        debug_logs = sorted(tmp_path.glob("opencode_attempt_*.log"))
+        assert len(debug_logs) == 1
+        assert debug_logs[0].read_text(encoding="utf-8") == "model said done"
+        workspaces = sorted(tmp_path.glob("opencode_beast_*"))
+        assert len(workspaces) == 1
 
 
 # ============================================================

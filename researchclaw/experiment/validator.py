@@ -8,6 +8,7 @@ enabling automated repair via LLM re-generation.
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -420,6 +421,98 @@ def format_issues_for_llm(validation: CodeValidation) -> str:
             f"- [{issue.severity.upper()}] ({issue.category}) {issue.message} @ {loc}"
         )
     return "\n".join(lines)
+
+
+_EXTERNAL_DATASET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bload_dataset\s*\("),
+    re.compile(r"\bfetch_covtype\s*\("),
+    re.compile(r"\bfetch_openml\s*\("),
+    re.compile(r"\bPygGraphPropPredDataset\s*\("),
+)
+_HARDCODED_DATA_ROOT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"['\"]\/workspace\/data(?:\/[^'\"]*)?['\"]"),
+)
+_FALLBACK_SUBSTITUTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"using .* fallback for", re.IGNORECASE),
+    re.compile(r"load_breast_cancer\s*\(", re.IGNORECASE),
+    re.compile(r"load_wine\s*\(", re.IGNORECASE),
+)
+
+
+def validate_project_files(files: dict[str, str]) -> CodeValidation:
+    """Validate multi-file experiment contracts that cannot be checked per file."""
+    result = CodeValidation()
+    py_files = {
+        fname: code for fname, code in files.items() if fname.endswith(".py")
+    }
+    requires_setup = False
+    has_setup = "setup.py" in files
+    for fname, code in py_files.items():
+        if fname not in {"setup.py", "__init__.py"}:
+            if "from ." in code or "from .." in code:
+                result.issues.append(
+                    ValidationIssue(
+                        severity="error",
+                        category="import",
+                        message=(
+                            f"Root-level file '{fname}' uses relative imports. "
+                            "Projects executed via `python main.py` must use "
+                            "absolute local imports."
+                        ),
+                    )
+                )
+        if any(p.search(code) for p in _EXTERNAL_DATASET_PATTERNS):
+            requires_setup = True
+        if "download_if_missing=False" in code and (
+            "fetch_covtype(" in code or "fetch_openml(" in code
+        ):
+            requires_setup = True
+        if any(p.search(code) for p in _HARDCODED_DATA_ROOT_PATTERNS):
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    category="style",
+                    message=(
+                        f"File '{fname}' hardcodes '/workspace/data'. Use "
+                        "os.environ['RC_DATA_DIR'] and the shared cache env vars instead."
+                    ),
+                )
+            )
+        if any(p.search(code) for p in _FALLBACK_SUBSTITUTION_PATTERNS):
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    category="style",
+                    message=(
+                        f"File '{fname}' contains dataset substitution fallback logic. "
+                        "Raise a RuntimeError instead of swapping to a different dataset."
+                    ),
+                )
+            )
+    if requires_setup and not has_setup:
+        result.issues.append(
+            ValidationIssue(
+                severity="error",
+                category="style",
+                message=(
+                    "Project loads downloadable datasets but does not include setup.py. "
+                    "Dataset downloads/preparation must happen in setup.py."
+                ),
+            )
+        )
+    if has_setup:
+        setup_code = files["setup.py"]
+        if "RC_DATA_DIR" not in setup_code:
+            result.issues.append(
+                ValidationIssue(
+                    severity="error",
+                    category="style",
+                    message=(
+                        "setup.py must use os.environ['RC_DATA_DIR'] as the writable data root."
+                    ),
+                )
+            )
+    return result
 
 
 # ---------------------------------------------------------------------------

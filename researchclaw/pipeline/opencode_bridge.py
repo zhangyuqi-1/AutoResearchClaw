@@ -470,7 +470,16 @@ class OpenCodeBridge:
         # Use -m flag to specify model (more reliable than opencode.json)
         resolved_model = self._resolve_opencode_model()
         opencode_cmd = shutil.which("opencode") or "opencode"
-        cmd = [opencode_cmd, "run", "-m", resolved_model, "--format", "json", prompt]
+        cmd = [
+            opencode_cmd,
+            "run",
+            "--dangerously-skip-permissions",
+            "-m",
+            resolved_model,
+            "--format",
+            "json",
+            prompt,
+        ]
 
         t0 = time.monotonic()
         try:
@@ -528,13 +537,38 @@ class OpenCodeBridge:
                 except OSError as exc:
                     logger.warning("Beast mode: failed to read %s: %s", py_file, exc)
 
-        # Also collect requirements.txt and setup.py at root
-        for extra in ("requirements.txt", "setup.py"):
-            p = workspace / extra
-            if p.exists() and extra not in files:
-                files[extra] = p.read_text(encoding="utf-8", errors="replace")
+        # Also collect support files such as requirements/setup from the
+        # entire workspace tree. OpenCode may place them under src/ or other
+        # nested directories even when Python modules are written elsewhere.
+        support_files = ("requirements.txt", "setup.py")
+        for extra in support_files:
+            candidates = sorted(
+                workspace.rglob(extra),
+                key=lambda p: len(p.relative_to(workspace).parts),
+            )
+            for path in candidates:
+                rel = path.relative_to(workspace)
+                if any(part.startswith(".") for part in rel.parts):
+                    continue
+                if extra in files:
+                    break
+                try:
+                    files[extra] = path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).strip()
+                except OSError as exc:
+                    logger.warning("Beast mode: failed to read %s: %s", path, exc)
 
         return files
+
+    @staticmethod
+    def _write_attempt_log(stage_dir: Path, attempt: int, log: str) -> None:
+        try:
+            (stage_dir / f"opencode_attempt_{attempt}.log").write_text(
+                log or "", encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning("Beast mode: failed to write attempt log: %s", exc)
 
     # -- entry-point validation ------------------------------------------------
 
@@ -697,20 +731,22 @@ class OpenCodeBridge:
             if success:
                 files = self._collect_files(workspace)
                 if "main.py" not in files:
+                    self._write_attempt_log(stage_dir, attempt + 1, log)
                     logger.warning(
                         "Beast mode: OpenCode succeeded but no main.py found "
                         "(files: %s)", list(files.keys()),
                     )
-                    last_error = "No main.py in OpenCode output"
-                    # Cleanup failed workspace
-                    if self._workspace_cleanup and workspace.exists():
-                        shutil.rmtree(workspace, ignore_errors=True)
+                    last_error = (
+                        f"No main.py in OpenCode output "
+                        f"(workspace: {workspace})"
+                    )
                     continue
 
                 # BUG-R52-01: Ensure main.py has an entry point
                 files = self._ensure_main_entry_point(files)
 
                 # Write log
+                self._write_attempt_log(stage_dir, attempt + 1, log)
                 try:
                     (stage_dir / "opencode_log.txt").write_text(
                         log or "", encoding="utf-8",
@@ -744,7 +780,11 @@ class OpenCodeBridge:
         return OpenCodeResult(
             success=False,
             opencode_log=last_error,
-            error=f"OpenCode failed after {1 + self._max_retries} attempt(s)",
+            error=(
+                f"OpenCode failed: {last_error}"
+                if last_error
+                else f"OpenCode failed after {1 + self._max_retries} attempt(s)"
+            ),
         )
 
 

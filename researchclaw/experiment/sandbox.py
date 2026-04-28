@@ -417,14 +417,89 @@ class ExperimentSandbox:
             )
 
         start = time.monotonic()
+        env = self._build_project_env(sandbox_project, env_overrides=env_overrides)
+        network_policy = (self.config.network_policy or "full").strip().lower()
+        if network_policy not in {"full", "none"}:
+            return SandboxResult(
+                returncode=-1,
+                stdout="",
+                stderr=(
+                    "Local sandbox only supports network_policy='full' or 'none'; "
+                    f"got {network_policy!r}."
+                ),
+                elapsed_sec=0.0,
+                metrics={},
+            )
+
+        requirements_path = sandbox_project / "requirements.txt"
+        setup_path = sandbox_project / "setup.py"
+        phase_stdout: list[str] = []
+        phase_stderr: list[str] = []
+
+        if network_policy == "none" and (
+            requirements_path.exists() or setup_path.exists()
+        ):
+            return SandboxResult(
+                returncode=-1,
+                stdout="",
+                stderr=(
+                    "Sandbox network_policy='none' forbids requirements.txt/setup.py "
+                    "for local sandbox execution. Use pre-cached data only, or set "
+                    "sandbox.network_policy='full'."
+                ),
+                elapsed_sec=time.monotonic() - start,
+                metrics={},
+            )
+
+        def _record_phase(label: str, result: SandboxResult) -> None:
+            if result.stdout:
+                phase_stdout.append(f"[{label} stdout]\n{result.stdout.rstrip()}\n")
+            if result.stderr:
+                phase_stderr.append(f"[{label} stderr]\n{result.stderr.rstrip()}\n")
+
+        if requirements_path.exists() and self.config.auto_install_deps:
+            req_result = self._run_project_phase(
+                sandbox_project,
+                ["-m", "pip", "install", "-r", "requirements.txt"],
+                timeout_sec=self.config.pip_timeout_sec,
+                env=env,
+                label="phase-0-pip",
+            )
+            _record_phase("phase-0-pip", req_result)
+            if req_result.returncode != 0 or req_result.timed_out:
+                return SandboxResult(
+                    returncode=req_result.returncode,
+                    stdout="\n".join(phase_stdout),
+                    stderr="\n".join(phase_stderr),
+                    elapsed_sec=time.monotonic() - start,
+                    metrics={},
+                    timed_out=req_result.timed_out,
+                )
+
+        if setup_path.exists():
+            setup_result = self._run_project_phase(
+                sandbox_project,
+                ["setup.py"],
+                timeout_sec=self.config.setup_timeout_sec,
+                env=env,
+                label="phase-1-setup",
+            )
+            _record_phase("phase-1-setup", setup_result)
+            if setup_result.returncode != 0 or setup_result.timed_out:
+                return SandboxResult(
+                    returncode=setup_result.returncode,
+                    stdout="\n".join(phase_stdout),
+                    stderr="\n".join(phase_stderr),
+                    elapsed_sec=time.monotonic() - start,
+                    metrics={},
+                    timed_out=setup_result.timed_out,
+                )
+
         command = self._build_command(entry, args=args)
         logger.debug("Running project sandbox command: %s (cwd=%s)", command, sandbox_project)
 
         result: SandboxResult
         try:
-            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-            if env_overrides:
-                env.update(env_overrides)
             completed = subprocess.run(
                 command,
                 capture_output=True,
@@ -448,7 +523,15 @@ class ExperimentSandbox:
                 exc, elapsed_sec=time.monotonic() - start
             )
 
-        return result
+        _record_phase("phase-2-main", result)
+        return SandboxResult(
+            returncode=result.returncode,
+            stdout="\n".join(phase_stdout),
+            stderr="\n".join(phase_stderr),
+            elapsed_sec=result.elapsed_sec,
+            metrics=result.metrics,
+            timed_out=result.timed_out,
+        )
 
     @staticmethod
     def _inject_harness(target_dir: Path) -> None:
@@ -475,6 +558,12 @@ class ExperimentSandbox:
         *,
         args: list[str] | None = None,
     ) -> list[str]:
+        command = [self._python_executable(), "-u", str(script_path)]
+        if args:
+            command.extend(args)
+        return command
+
+    def _python_executable(self) -> str:
         # Convert relative python_path to absolute WITHOUT resolving symlinks.
         # Using .resolve() would follow venv symlinks to the system Python binary,
         # which loses the venv context (site-packages like numpy become unavailable).
@@ -482,11 +571,93 @@ class ExperimentSandbox:
         python_path = Path(python)
         if not python_path.is_absolute() and python != "python":
             python_path = Path.cwd() / python_path
-        # -u: unbuffered stdout/stderr so subprocess.run captures all output
-        command = [str(python_path), "-u", str(script_path)]
-        if args:
-            command.extend(args)
-        return command
+        return str(python_path)
+
+    def _build_project_env(
+        self,
+        sandbox_project: Path,
+        *,
+        env_overrides: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        data_root = Path(self.config.data_root) if self.config.data_root else (sandbox_project / "_data")
+        if not data_root.is_absolute():
+            data_root = sandbox_project / data_root
+        data_root.mkdir(parents=True, exist_ok=True)
+        hf_home = data_root / "hf_home"
+        hf_datasets = data_root / "hf_datasets"
+        hf_models = data_root / "hf_models"
+        sklearn_home = data_root / "sklearn"
+        for path in (hf_home, hf_datasets, hf_models, sklearn_home):
+            path.mkdir(parents=True, exist_ok=True)
+        pip_cache = self.workdir / ".pip_cache"
+        pip_cache.mkdir(parents=True, exist_ok=True)
+
+        env = {
+            **os.environ,
+            "PYTHONUNBUFFERED": "1",
+            "RC_DATA_DIR": str(data_root),
+            "HF_HOME": str(hf_home),
+            "HF_CACHE": str(hf_home),
+            "HF_DATASETS_CACHE": str(hf_datasets),
+            "TRANSFORMERS_CACHE": str(hf_models),
+            "SKLEARN_HOME": str(sklearn_home),
+            "PIP_CACHE_DIR": str(pip_cache),
+        }
+        if env_overrides:
+            env.update(env_overrides)
+        return env
+
+    def _run_project_phase(
+        self,
+        sandbox_project: Path,
+        args: list[str],
+        *,
+        timeout_sec: int,
+        env: dict[str, str],
+        label: str,
+    ) -> SandboxResult:
+        command = [self._python_executable(), *args]
+        logger.debug("Running sandbox %s command: %s (cwd=%s)", label, command, sandbox_project)
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_sec,
+                cwd=sandbox_project,
+                env=env,
+                check=False,
+            )
+            (sandbox_project / f"{label}.stdout.log").write_text(
+                completed.stdout or "",
+                encoding="utf-8",
+            )
+            (sandbox_project / f"{label}.stderr.log").write_text(
+                completed.stderr or "",
+                encoding="utf-8",
+            )
+            return SandboxResult(
+                returncode=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                elapsed_sec=0.0,
+                metrics={},
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = _to_text(exc.stdout)
+            stderr = _to_text(exc.stderr)
+            (sandbox_project / f"{label}.stdout.log").write_text(stdout, encoding="utf-8")
+            (sandbox_project / f"{label}.stderr.log").write_text(stderr, encoding="utf-8")
+            return SandboxResult(
+                returncode=-1,
+                stdout=stdout,
+                stderr=stderr,
+                elapsed_sec=0.0,
+                metrics={},
+                timed_out=True,
+            )
 
     @staticmethod
     def _result_from_completed(

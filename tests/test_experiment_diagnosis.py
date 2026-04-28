@@ -96,6 +96,53 @@ class TestSyntheticData:
         assert DeficiencyType.SYNTHETIC_DATA_FALLBACK in types
 
 
+class TestDatasetSubstitution:
+    def test_detects_dataset_substitution_fallback(self):
+        diag = diagnose_experiment(
+            experiment_summary={"condition_summaries": {}, "best_run": {"metrics": {}}},
+            stdout="DATA_WARNING: using wine fallback for Forest Cover Type benchmark",
+        )
+        types = {d.type for d in diag.deficiencies}
+        assert DeficiencyType.DATASET_SUBSTITUTION in types
+
+    def test_dataset_substitution_forces_technical_report_mode(self):
+        summary = {
+            "condition_summaries": {
+                "A": {"metrics": {"metric": 80.0}, "n_seeds": 2},
+                "B": {"metrics": {"metric": 82.0}, "n_seeds": 2},
+                "C": {"metrics": {"metric": 84.0}, "n_seeds": 2},
+            },
+            "best_run": {
+                "metrics": {
+                    "A/0/m": 80.0,
+                    "A/1/m": 81.0,
+                    "B/0/m": 82.0,
+                    "B/1/m": 83.0,
+                    "C/0/m": 84.0,
+                    "C/1/m": 85.0,
+                }
+            },
+            "stdout": "DATA_WARNING: using wine fallback for Forest Cover Type benchmark",
+        }
+
+        qa = assess_experiment_quality(summary)
+
+        assert qa.mode == PaperMode.TECHNICAL_REPORT
+        assert any(
+            d.type == DeficiencyType.DATASET_SUBSTITUTION for d in qa.deficiencies
+        )
+
+
+class TestSetupPhaseMissing:
+    def test_detects_setup_phase_missing_error(self):
+        diag = diagnose_experiment(
+            experiment_summary={"condition_summaries": {}, "best_run": {"metrics": {}}},
+            stderr="Project loads downloadable datasets but does not include setup.py.",
+        )
+        types = {d.type for d in diag.deficiencies}
+        assert DeficiencyType.SETUP_PHASE_MISSING in types
+
+
 class TestGPUOOM:
     def test_detects_oom(self):
         diag = diagnose_experiment(
