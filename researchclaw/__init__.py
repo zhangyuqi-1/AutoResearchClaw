@@ -1,3 +1,3 @@
-"""ResearchClaw — Autonomous Research Pipeline."""
+"""AutoResearchClaw — Autonomous Research Pipeline."""
 
-__version__ = "0.3.1"
+__version__ = "0.5.0"

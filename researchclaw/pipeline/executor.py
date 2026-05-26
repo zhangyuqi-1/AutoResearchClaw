@@ -36,12 +36,24 @@ from researchclaw.experiment.validator import (
 
 logger = logging.getLogger(__name__)
 
+
+def _select_output_files(contract, config) -> tuple[str, ...]:
+    """Pick the contract's collider-mode outputs when running collider_agent."""
+    if contract is None:
+        return ()
+    mode = getattr(getattr(config, "experiment", None), "mode", "") or ""
+    alt = getattr(contract, "collider_output_files", ()) or ()
+    if mode == "collider_agent" and alt:
+        return tuple(alt)
+    return tuple(contract.output_files)
+
 # ---------------------------------------------------------------------------
 # Domain detection (extracted to _domain.py)
 # ---------------------------------------------------------------------------
 from researchclaw.pipeline._domain import (  # noqa: E402
     _detect_domain,
     _is_ml_domain,
+    _prompt_bank_domain_from_config,
 )
 
 
@@ -189,7 +201,8 @@ def _get_hitl_session(adapters: AdapterBundle) -> Any:
 
 
 def _run_hitl_pre_stage(
-    stage: Stage, run_dir: Path, adapters: AdapterBundle
+    stage: Stage, run_dir: Path, adapters: AdapterBundle,
+    config: RCConfig | None = None,
 ) -> StageResult | None:
     """HITL pre-stage hook: pause before execution if policy requires.
 
@@ -205,9 +218,9 @@ def _run_hitl_pre_stage(
 
     from researchclaw.hitl.intervention import HumanAction, PauseReason
 
-    # Collect output file names from contract
+    # Collect output file names from contract (mode-aware: collider_agent → collider_plan.md)
     contract = CONTRACTS.get(stage)
-    output_files = tuple(contract.output_files) if contract else ()
+    output_files = _select_output_files(contract, config)
 
     session.pause(
         stage_num,
@@ -341,7 +354,7 @@ def _run_hitl_post_stage(
 
     # Build context summary from stage artifacts
     contract = CONTRACTS.get(stage)
-    output_files = tuple(contract.output_files) if contract else ()
+    output_files = _select_output_files(contract, config)
     context_lines = [
         f"Stage {stage_num} ({stage.name}) completed: {result.status.value}",
     ]
@@ -446,7 +459,7 @@ def _run_collaboration_loop(
 
     stage_num = int(stage)
     contract = CONTRACTS.get(stage)
-    output_files = tuple(contract.output_files) if contract else ()
+    output_files = _select_output_files(contract, config)
 
     collab = CollaborationSession(run_dir=run_dir)
 
@@ -594,7 +607,7 @@ def execute_stage(
     """Execute one pipeline stage, validate outputs, and apply gate logic."""
 
     # --- HITL pre-stage hook ---
-    hitl_result = _run_hitl_pre_stage(stage, run_dir, adapters)
+    hitl_result = _run_hitl_pre_stage(stage, run_dir, adapters, config=config)
     if hitl_result is not None:
         return hitl_result
 
@@ -642,7 +655,14 @@ def execute_stage(
     try:
         _ = advance(stage, StageStatus.PENDING, TransitionEvent.START)
         executor = _STAGE_EXECUTORS[stage]
-        prompts = PromptManager(config.prompts.custom_file or None)  # type: ignore[attr-defined]
+        prompts = PromptManager(
+            config.prompts.custom_file or None,  # type: ignore[attr-defined]
+            domain=_prompt_bank_domain_from_config(config),
+            extra_prompts={
+                stage_key: path_or_text
+                for stage_key, path_or_text in getattr(config.prompts, "extra_prompts", ())  # type: ignore[attr-defined]
+            } or None,
+        )
         try:
             result = executor(
                 stage_dir, run_dir, config, adapters, llm=llm, prompts=prompts
@@ -662,7 +682,7 @@ def execute_stage(
         )
 
     if result.status == StageStatus.DONE:
-        for output_file in contract.output_files:
+        for output_file in _select_output_files(contract, config):
             if output_file.endswith("/"):
                 path = stage_dir / output_file.rstrip("/")
                 if not path.is_dir() or not any(path.iterdir()):
@@ -750,7 +770,14 @@ def execute_stage(
     except Exception:  # noqa: BLE001
         logger.warning("MetaClaw PRM evaluation failed (non-blocking)")
 
-    if gate_required(stage, config.security.hitl_required_stages):
+    profile_name = (
+        getattr(getattr(config, "project", None), "profile", None) or None
+    )
+    if gate_required(
+        stage,
+        config.security.hitl_required_stages,
+        profile=profile_name,
+    ):
         if auto_approve_gates:
             if bridge.use_memory:
                 adapters.memory.append("gates", f"{run_id}:{int(stage)}:auto-approved")

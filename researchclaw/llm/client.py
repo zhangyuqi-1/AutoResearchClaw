@@ -97,7 +97,6 @@ class LLMClient:
         self.config = config
         self._model_chain = [config.primary_model] + list(config.fallback_models)
         self._anthropic = None  # Will be set by from_rc_config if needed
-        self._gemini = None  # Will be set by from_rc_config if needed
 
     @staticmethod
     def _normalize_wire_api(wire_api: str) -> str:
@@ -173,12 +172,6 @@ class LLMClient:
             from .anthropic_adapter import AnthropicAdapter
 
             client._anthropic = AnthropicAdapter(
-                original_base_url, original_api_key, config.timeout_sec
-            )
-        elif provider == "gemini":
-            from .gemini_adapter import GeminiAdapter
-
-            client._gemini = GeminiAdapter(
                 original_base_url, original_api_key, config.timeout_sec
             )
         return client
@@ -298,7 +291,6 @@ class LLMClient:
         json_mode: bool,
     ) -> LLMResponse:
         """Call with exponential backoff retry."""
-        last_err = "unknown"
         for attempt in range(self.config.max_retries):
             try:
                 return self._raw_call(
@@ -355,14 +347,12 @@ class LLMClient:
                         status,
                         delay,
                     )
-                    last_err = f"HTTP {e.code}: {body[:200]}"
                     time.sleep(delay)
                     continue
 
                 raise  # Other HTTP errors
-            except urllib.error.URLError as e:
+            except urllib.error.URLError:
                 if attempt < self.config.max_retries - 1:
-                    last_err = f"URLError: {e}"
                     delay = min(
                         self.config.retry_base_delay * (2**attempt),
                         _MAX_BACKOFF_SEC,
@@ -373,7 +363,6 @@ class LLMClient:
             except (TimeoutError, OSError) as exc:
                 # Covers TimeoutError, ConnectionResetError, IncompleteRead, etc.
                 if attempt < self.config.max_retries - 1:
-                    last_err = f"Timeout/OSError: {exc}"
                     delay = self.config.retry_base_delay * (2**attempt)
                     logger.info(
                         "Retry %d/%d for %s (%s). Waiting %.1fs.",
@@ -389,7 +378,7 @@ class LLMClient:
 
         # All retries exhausted
         raise RuntimeError(
-            f"LLM call failed after {self.config.max_retries} retries for model {model}. Last error: {last_err}"
+            f"LLM call failed after {self.config.max_retries} retries for model {model}"
         )
 
     def _raw_call(
@@ -405,10 +394,6 @@ class LLMClient:
         # Use Anthropic adapter if configured
         if self._anthropic:
             data = self._anthropic.chat_completion(
-                model, messages, max_tokens, temperature, json_mode
-            )
-        elif self._gemini:
-            data = self._gemini.chat_completion(
                 model, messages, max_tokens, temperature, json_mode
             )
         else:
@@ -460,7 +445,6 @@ class LLMClient:
                     or _model_lower.startswith("ernie")
                     or _model_lower.startswith("spark")
                     or _model_lower.startswith("gemma")
-                    or _model_lower.startswith("apple")
                     or self._normalize_wire_api(self.config.wire_api) == "responses"
                 )
                 if _no_response_format:

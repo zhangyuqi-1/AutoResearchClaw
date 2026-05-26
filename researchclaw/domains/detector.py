@@ -28,6 +28,30 @@ _PROFILES_DIR = Path(__file__).parent / "profiles"
 
 
 # ---------------------------------------------------------------------------
+# Forced profile override
+# ---------------------------------------------------------------------------
+# When non-empty, ``detect_domain`` and ``detect_domain_id`` return this
+# profile unconditionally (skipping keyword + LLM detection).  Set from the
+# config layer when the user picks a profile via ``--profile`` or
+# ``project.profile:`` so every pipeline stage agrees on the domain.
+_FORCED_PROFILE_ID: str = ""
+
+
+def set_forced_profile(profile_id: str) -> None:
+    """Force ``detect_domain`` to return the given profile id.
+
+    Pass an empty string to clear the override.
+    """
+    global _FORCED_PROFILE_ID
+    _FORCED_PROFILE_ID = str(profile_id or "").strip()
+
+
+def get_forced_profile() -> str:
+    """Return the currently forced profile id (empty if none)."""
+    return _FORCED_PROFILE_ID
+
+
+# ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
 
@@ -110,6 +134,17 @@ class DomainProfile:
     code_generation_hints: str = ""
     result_analysis_hints: str = ""
 
+    # Deployment defaults (used by researchclaw.domains.deploy when the
+    # profile is selected via --profile or project.profile).  Empty strings
+    # mean "no preference — leave the user's config value in place".
+    preferred_experiment_mode: str = ""
+    preferred_project_mode: str = ""
+    preferred_target_conference: str = ""
+    default_time_budget_sec: int = 0
+    default_max_iterations: int = 0
+    default_metric_key: str = ""
+    default_metric_direction: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Profile loading
@@ -148,6 +183,15 @@ def _load_profile(path: Path) -> DomainProfile:
         hp_reporting_guidance=data.get("hp_reporting_guidance", ""),
         code_generation_hints=data.get("code_generation_hints", ""),
         result_analysis_hints=data.get("result_analysis_hints", ""),
+        preferred_experiment_mode=str(data.get("preferred_experiment_mode", "") or ""),
+        preferred_project_mode=str(data.get("preferred_project_mode", "") or ""),
+        preferred_target_conference=str(
+            data.get("preferred_target_conference", "") or ""
+        ),
+        default_time_budget_sec=int(data.get("default_time_budget_sec", 0) or 0),
+        default_max_iterations=int(data.get("default_max_iterations", 0) or 0),
+        default_metric_key=str(data.get("default_metric_key", "") or ""),
+        default_metric_direction=str(data.get("default_metric_direction", "") or ""),
     )
 
 
@@ -209,8 +253,8 @@ _KEYWORD_RULES: list[tuple[list[str], str]] = [
       "language model", "transformer", "bert", "gpt", "llm", "tokeniz"],
      "ml_nlp"),
     (["object detection", "image segmentation", "image classification",
-      "convolutional", "cnn", "resnet", "vit", "vision transformer",
-      "computer vision", "visual"], "ml_vision"),
+      "convolutional", "cnn", "resnet", "vision transformer",
+      "computer vision", "visual recognition"], "ml_vision"),
     (["graph neural", "gnn", "node classification", "link prediction",
       "graph convolution", "message passing"], "ml_graph"),
     (["tabular", "xgboost", "lightgbm", "catboost", "feature engineering"],
@@ -236,6 +280,21 @@ _KEYWORD_RULES: list[tuple[list[str], str]] = [
       "backpropagation", "gradient descent", "pytorch", "tensorflow",
       "torch", "sklearn"], "ml_generic"),
 
+    # HEP phenomenology (before generic physics to avoid misclassification)
+    (["dark matter", "wimp", "direct detection", "dark photon",
+      "axion", "neutralino", "bsm", "beyond standard model",
+      "effective field theory", "relic density", "annihilation cross section",
+      "hep-ph", "hep-ex", "madgraph5", "feynrules", "delphes", "pythia8",
+      "collider phenomenology", "monojet", "mono-x", "missing et",
+      "simplified model", "mediator mass", "portal interaction",
+      "spin-independent", "spin-dependent", "xenon1t", "pandax", "lz experiment",
+      "exclusion contour", "atlas dark matter", "cms dark matter"],
+     "hep_ph"),
+    (["particle physics", "standard model", "qcd", "qed",
+      "electroweak", "higgs boson", "top quark", "drell-yan",
+      "parton distribution", "next-to-leading order"],
+     "hep_ph"),
+
     # Physics
     (["molecular dynamics", "n-body", "lennard-jones", "force field",
       "jax-md", "ase", "openmm"], "physics_simulation"),
@@ -255,6 +314,15 @@ _KEYWORD_RULES: list[tuple[list[str], str]] = [
     (["chemistry", "molecule", "reaction", "catalyst"], "chemistry_general"),
 
     # Biology
+    # Constraint-based metabolic modelling (most-specific biology rule first
+    # so it wins over biology_singlecell / biology_general for FBA topics).
+    (["metabolic model", "flux balance", "fba", "cobrapy", "bigg model",
+      "gene essentiality", "metabolic engineering", "constraint-based",
+      "phenotypic phase plane", "biomass objective", "knockout screen",
+      "metabolic flux", "genome-scale metabolic", "pfba", "fva",
+      "flux variability", "escher map", "in-silico knockout",
+      "iaf1260", "ijo1366", "iml1515", "imm904", "yeast8", "recon3d"],
+     "biology_metabolic"),
     (["single-cell", "scrna", "scanpy", "anndata", "leiden",
       "differential expression", "pseudotime"], "biology_singlecell"),
     (["genomics", "genome", "variant calling", "sequencing",
@@ -292,13 +360,20 @@ _KEYWORD_RULES: list[tuple[list[str], str]] = [
 ]
 
 
+_SHORT_KW_LEN = 5
+
+
 def _keyword_detect(text: str) -> str | None:
     """Match text against keyword rules. Returns domain_id or None."""
     lower = text.lower()
     for keywords, domain_id in _KEYWORD_RULES:
         for kw in keywords:
-            if kw in lower:
-                return domain_id
+            if len(kw) < _SHORT_KW_LEN:
+                if re.search(r"\b" + re.escape(kw) + r"\b", lower):
+                    return domain_id
+            else:
+                if kw in lower:
+                    return domain_id
     return None
 
 
@@ -319,6 +394,7 @@ Available domains:
 - ml_generative: Generative models (GANs, diffusion, VAE)
 - ml_compression: Model compression (distillation, pruning, quantization)
 - ml_generic: Other ML/AI research
+- hep_ph: High energy physics phenomenology (dark matter, BSM, collider, EFT)
 - physics_simulation: Molecular dynamics, N-body, classical simulations
 - physics_pde: PDE solvers (FEM, FDM, spectral methods)
 - physics_quantum: Quantum mechanics, quantum chemistry
@@ -413,6 +489,20 @@ def detect_domain(
     """
     combined_text = f"{topic} {hypotheses} {literature}"
 
+    # Level 0: forced profile (set by config layer when --profile is used).
+    if _FORCED_PROFILE_ID:
+        profile = get_profile(_FORCED_PROFILE_ID)
+        if profile:
+            logger.info(
+                "Domain forced via profile: %s (%s)",
+                profile.display_name, _FORCED_PROFILE_ID,
+            )
+            return profile
+        logger.warning(
+            "Forced profile id '%s' has no matching profile — falling back",
+            _FORCED_PROFILE_ID,
+        )
+
     # Level 1: Keyword matching
     domain_id = _keyword_detect(combined_text)
     if domain_id:
@@ -454,6 +544,16 @@ async def detect_domain_async(
     """Async version of detect_domain with LLM classification support."""
     combined_text = f"{topic} {hypotheses} {literature}"
 
+    # Level 0: forced profile override.
+    if _FORCED_PROFILE_ID:
+        profile = get_profile(_FORCED_PROFILE_ID)
+        if profile:
+            logger.info(
+                "Domain forced via profile (async): %s (%s)",
+                profile.display_name, _FORCED_PROFILE_ID,
+            )
+            return profile
+
     # Level 1: Keyword matching
     domain_id = _keyword_detect(combined_text)
     if domain_id:
@@ -487,6 +587,8 @@ def detect_domain_id(topic: str, hypotheses: str = "", literature: str = "") -> 
 
     Useful for lightweight checks where a full profile isn't needed.
     """
+    if _FORCED_PROFILE_ID:
+        return _FORCED_PROFILE_ID
     combined = f"{topic} {hypotheses} {literature}"
     return _keyword_detect(combined) or "generic"
 

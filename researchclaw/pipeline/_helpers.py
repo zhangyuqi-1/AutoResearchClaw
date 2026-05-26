@@ -516,9 +516,6 @@ def _extract_yaml_block(text: str) -> str:
     return text.strip()
 
 
-_JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
-
-
 def _safe_json_loads(text: str, default: Any) -> Any:
     """Parse JSON from text, handling noisy ACP output.
 
@@ -535,7 +532,8 @@ def _safe_json_loads(text: str, default: Any) -> Any:
         pass
 
     # Strategy 2: Find JSON in markdown code fences
-    for match in _JSON_FENCE_PATTERN.finditer(text):
+    fence_pattern = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
+    for match in fence_pattern.finditer(text):
         candidate = match.group(1).strip()
         try:
             return json.loads(candidate)
@@ -596,30 +594,6 @@ def _extract_code_block(content: str) -> str:
     return content.strip()
 
 
-_MULTI_FILE_PATTERNS = [
-    # Original: ```filename:xxx.py or ```python filename:xxx.py
-    re.compile(
-        r"```(?:python\s+)?filename:(\S+)\s*\n(.*?)```",
-        flags=re.DOTALL,
-    ),
-    # Variation: ``` filename:xxx.py (space after backticks)
-    re.compile(
-        r"```\s+filename:(\S+)\s*\n(.*?)```",
-        flags=re.DOTALL,
-    ),
-    # Variation: ```python\nfilename:xxx.py (filename on next line)
-    re.compile(
-        r"```(?:python)?\s*\nfilename:(\S+)\s*\n(.*?)```",
-        flags=re.DOTALL,
-    ),
-    # Variation: ```python\n# filename: xxx.py (comment marker)
-    re.compile(
-        r"```(?:python)?\s*\n#\s*(?:FILE|filename)\s*:\s*(\S+\.py)\s*\n(.*?)```",
-        flags=re.DOTALL,
-    ),
-]
-
-
 def _extract_multi_file_blocks(content: str) -> dict[str, str]:
     """Parse LLM response containing multiple files with filename markers.
 
@@ -647,8 +621,31 @@ def _extract_multi_file_blocks(content: str) -> dict[str, str]:
     Returns a dict mapping filename → code content.
     """
     # R13-2: Multiple patterns to handle LLM format variations
+    patterns = [
+        # Original: ```filename:xxx.py or ```python filename:xxx.py
+        re.compile(
+            r"```(?:python\s+)?filename:(\S+)\s*\n(.*?)```",
+            flags=re.DOTALL,
+        ),
+        # Variation: ``` filename:xxx.py (space after backticks)
+        re.compile(
+            r"```\s+filename:(\S+)\s*\n(.*?)```",
+            flags=re.DOTALL,
+        ),
+        # Variation: ```python\nfilename:xxx.py (filename on next line)
+        re.compile(
+            r"```(?:python)?\s*\nfilename:(\S+)\s*\n(.*?)```",
+            flags=re.DOTALL,
+        ),
+        # Variation: ```python\n# filename: xxx.py (comment marker)
+        re.compile(
+            r"```(?:python)?\s*\n#\s*(?:FILE|filename)\s*:\s*(\S+\.py)\s*\n(.*?)```",
+            flags=re.DOTALL,
+        ),
+    ]
+
     matches: list[tuple[str, str]] = []
-    for pattern in _MULTI_FILE_PATTERNS:
+    for pattern in patterns:
         matches = pattern.findall(content)
         if matches:
             break
@@ -717,12 +714,6 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-# BUG-173: regex for condition=name metric=value format
-_CONDITION_RE = re.compile(
-    r"^condition=(\S+)\s+metric=([0-9eE.+-]+)\s*$"
-)
-
-
 def _parse_metrics_from_stdout(stdout: str) -> dict[str, Any]:
     """Parse metric lines from experiment stdout.
 
@@ -735,6 +726,10 @@ def _parse_metrics_from_stdout(stdout: str) -> dict[str, Any]:
     Returns a flat dict of metric_name -> value.
     Filters out log/status lines using :func:`is_metric_name`.
     """
+    # BUG-173: regex for condition=name metric=value format
+    _CONDITION_RE = re.compile(
+        r"^condition=(\S+)\s+metric=([0-9eE.+-]+)\s*$"
+    )
     metrics: dict[str, Any] = {}
     for line in stdout.splitlines():
         line = line.strip()
@@ -1206,9 +1201,6 @@ def _topic_constraint_block(topic: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-_NAN_RE = re.compile(r"\bnan\b", re.IGNORECASE)
-
-
 def _detect_runtime_issues(sandbox_result: Any) -> str:
     """Detect NaN/Inf in metrics and extract stderr warnings from sandbox run.
 
@@ -1231,11 +1223,12 @@ def _detect_runtime_issues(sandbox_result: Any) -> str:
 
     # Check stdout for NaN values (word boundary to avoid matching "Nanotechnology" etc.)
     stdout = getattr(sandbox_result, "stdout", "") or ""
-    if _NAN_RE.search(stdout):
+    _nan_re = re.compile(r"\bnan\b", re.IGNORECASE)
+    if _nan_re.search(stdout):
         nan_lines = [
             line.strip()
             for line in stdout.splitlines()
-            if _NAN_RE.search(line)
+            if _nan_re.search(line)
         ]
         if nan_lines:
             issues.append(
@@ -1721,7 +1714,16 @@ def _multi_perspective_generate(
     Each role has its own system/user prompt. Outputs are saved to
     *perspectives_dir* and returned as ``{role_name: response_text}``.
     """
+    import os as _os  # noqa: PLC0415
     from researchclaw.prompts import _render  # noqa: PLC0415
+
+    # Ablation hook: ARC_ABL_DISABLE_DEBATE=1 collapses the debate to a
+    # single role so the multi-perspective synthesizer degenerates into a
+    # plain prompt. Used by experiments/component_ablation only.
+    if _os.environ.get("ARC_ABL_DISABLE_DEBATE", "").strip() == "1" and roles:
+        first_key = next(iter(roles))
+        roles = {first_key: roles[first_key]}
+        logger.info("ARC_ABL_DISABLE_DEBATE=1 — debate collapsed to role %s", first_key)
 
     perspectives_dir.mkdir(parents=True, exist_ok=True)
     results: dict[str, str] = {}

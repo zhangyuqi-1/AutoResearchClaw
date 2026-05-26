@@ -2,6 +2,13 @@ domain_id: ml_vision
 display_name: Computer Vision (ML)
 parent_domain: ml
 
+# Deployment defaults (only fill in blanks in the user's config.yaml).
+preferred_experiment_mode: docker
+preferred_project_mode: full-auto
+preferred_target_conference: neurips_2025
+default_metric_key: top1_accuracy
+default_metric_direction: maximize
+
 experiment_paradigm: comparison
 condition_terminology:
   baseline: baseline

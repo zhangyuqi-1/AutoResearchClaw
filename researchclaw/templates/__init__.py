@@ -14,6 +14,7 @@ Usage::
 
 from researchclaw.templates.conference import (
     CONFERENCE_REGISTRY,
+    ML_CHECKLIST_TEMPLATES,
     ConferenceTemplate,
     get_template,
     list_conferences,
@@ -23,6 +24,7 @@ from researchclaw.templates.converter import markdown_to_latex
 __all__ = [
     "CONFERENCE_REGISTRY",
     "ConferenceTemplate",
+    "ML_CHECKLIST_TEMPLATES",
     "get_template",
     "list_conferences",
     "markdown_to_latex",

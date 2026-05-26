@@ -115,6 +115,37 @@ def _execute_experiment_design(
         )
     except Exception:  # noqa: BLE001
         logger.debug("Domain detection unavailable", exc_info=True)
+
+    # --- Domain-specific experiment design context (YAML-driven overlay) ---
+    # For ML and HEP, the active prompt bank is already domain-native so we
+    # leave this empty. For other profiles (biology, physics, economics, …)
+    # the GenericPromptAdapter injects YAML-defined guidance here.
+    _domain_design_context = ""
+    if _domain_profile is not None:
+        try:
+            from researchclaw.domains.prompt_adapter import get_adapter as _get_prompt_adapter
+            _adapter = _get_prompt_adapter(_domain_profile)
+            _design_blocks = _adapter.get_experiment_design_blocks(
+                {"topic": config.research.topic}
+            )
+            if _design_blocks.experiment_design_context:
+                _domain_design_context = (
+                    "## Domain-Specific Experiment Guidelines\n"
+                    + _design_blocks.experiment_design_context
+                    + "\n\n"
+                )
+                if _design_blocks.statistical_test_guidance:
+                    _domain_design_context += (
+                        "## Statistical Analysis Guidance\n"
+                        + _design_blocks.statistical_test_guidance + "\n\n"
+                    )
+                logger.info(
+                    "ExperimentDesign: injecting YAML-driven domain context for %s",
+                    _domain_profile.domain_id,
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("Domain experiment design context unavailable", exc_info=True)
+
     if llm is not None:
         _pm = prompts or PromptManager()
         # Pass dataset_guidance block for experiment design
@@ -173,6 +204,7 @@ def _execute_experiment_design(
             preamble=preamble,
             hypotheses=hypotheses,
             dataset_guidance=_dg_block,
+            domain_design_context=_domain_design_context,
             time_budget_sec=config.experiment.time_budget_sec,
             metric_key=config.experiment.metric_key,
             metric_direction=config.experiment.metric_direction,

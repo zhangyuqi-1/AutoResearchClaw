@@ -2,6 +2,13 @@ domain_id: ml_generic
 display_name: Machine Learning (General)
 parent_domain: ml
 
+# Deployment defaults — fills blanks in config.yaml only.
+preferred_experiment_mode: docker
+preferred_project_mode: full-auto
+preferred_target_conference: neurips_2025
+default_metric_key: primary_metric
+default_metric_direction: maximize
+
 experiment_paradigm: comparison
 condition_terminology:
   baseline: baseline

@@ -11,18 +11,23 @@
 </p>
 
 <p align="center">
+  📄 <b>ورقتنا البحثية متاحة الآن على arXiv — تعالوا واقرأوها!</b> <a href="https://arxiv.org/abs/2605.20025"><i>AutoResearchClaw: Self-Reinforcing Autonomous Research with Human-AI Collaboration</i></a>
+</p>
+
+<p align="center">
   <img src="../image/framework_v2.png" width="100%" alt="AutoResearchClaw Framework">
 </p>
 
 
 <p align="center">
+  <a href="https://arxiv.org/abs/2605.20025"><img src="https://img.shields.io/badge/arXiv-2605.20025-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <a href="https://huggingface.co/datasets/AIMING-Lab-UNC/ARC-Bench"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-ARC--Bench-yellow" alt="ARC-Bench on Hugging Face"></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License"></a>
   <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="#الاختبار"><img src="https://img.shields.io/badge/Tests-2699%20passed-brightgreen?logo=pytest&logoColor=white" alt="2699 Tests Passed"></a>
   <a href="https://github.com/aiming-lab/AutoResearchClaw"><img src="https://img.shields.io/badge/GitHub-AutoResearchClaw-181717?logo=github" alt="GitHub"></a>
   <a href="#-تكامل-openclaw"><img src="https://img.shields.io/badge/OpenClaw-Compatible-ff4444?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg==" alt="OpenClaw Compatible"></a>
   <a href="https://discord.gg/u4ksqW5P"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="#%EF%B8%8F-ethics-and-responsible-use"><img src="https://img.shields.io/badge/⚠️_Ethics-Read_Before_Use-orange" alt="Ethics Guidelines"></a>
 </p>
 
 <p align="center">
@@ -64,9 +69,9 @@
 ---
 
 ## 🔥 News
-- **[04/08/2026]** **إرشادات الأخلاقيات والاستخدام المسؤول!** — أضفنا إرشادات أخلاقية شاملة تغطي النزاهة الأكاديمية والشفافية والتحقق من الاقتباسات ومنع سوء الاستخدام. الأوراق المُنتجة بالذكاء الاصطناعي مسودات وليست أعمالاً نهائية — المراجعة البشرية ضرورية.
+- **[05/19/2026]** **v0.5.0** — **وكلاء تجارب متعددة المجالات + ARC-Bench** — تحديثان رئيسيان. **(1) وكلاء تنفيذ متخصصون حسب المجال:** أصبحت مرحلة التجارب (المراحل 10–13) توجّه المهام إلى وكلاء متخصصين حسب التخصص بدلاً من بيئة ML الافتراضية فقط — **فيزياء الطاقة العالية** (ColliderAgent: FeynRules، MadGraph5، Delphes عبر سحابة Magnus)، و**الأحياء** (نمذجة الأيض على مستوى الجينوم باستخدام COBRApy)، و**الإحصاء** (وكيل دراسات المحاكاة)، مع منفّذ Docker عام للكيمياء/المواد. يختار المسار التنفيذي المنفّذ المناسب تلقائيًا حسب مجال البحث. **(2) ARC-Bench:** معيار مرجعي مفتوح للبحث الذاتي يضم **55 موضوعًا** يغطي **ML (25)، وفيزياء الطاقة العالية (10)، والكم (10)، والأحياء (7)، والإحصاء (3)**، مع بيان (manifest) ومقياس تقييم (rubric) لكل موضوع (`experiments/arc_bench/`، ومتاح أيضًا على [🤗 Hugging Face](https://huggingface.co/datasets/AIMING-Lab-UNC/ARC-Bench)). **[→ دليل تكامل المجالات](DOMAIN_INTEGRATION_GUIDE.md)**
 - **[04/01/2026]** **v0.4.0** — **نظام مساعد الطيار Human-in-the-Loop** — لم يعد AutoResearchClaw مستقلاً بالكامل فحسب. نظام HITL الجديد يضيف 6 أوضاع تدخل (`full-auto`، `gate-only`، `checkpoint`، `step-by-step`، `co-pilot`، `custom`)، وسياسات لكل مرحلة، وتعاون عميق بين الإنسان والذكاء الاصطناعي. يتضمن: ورشة الأفكار لتطوير الفرضيات التعاوني، متصفح خطوط الأساس لمراجعة تصميم التجارب، الكاتب المشارك للورقة للصياغة التعاونية، SmartPause (تدخل ديناميكي مدفوع بالثقة)، تعلّم التدخل ALHF، التحقق من الادعاءات لمكافحة الهلوسة، حواجز ميزانية التكلفة، تفريع خط الأنابيب لاستكشاف فرضيات متوازية، وأوامر CLI (`attach`/`status`/`approve`/`reject`/`guide`). **[→ دليل HITL الكامل](HITL_GUIDE.md)**
-- **[03/30/2026]** **تحميل مرن للمهارات** — يدعم AutoResearchClaw الآن تحميل مهارات مفتوحة المصدر ومخصصة من أي تخصص لتعزيز تجربتك البحثية. 19 مهارة مُحمّلة مسبقاً متضمنة كمراجع جاهزة للاستخدام، تغطي الكتابة العلمية وتصميم التجارب والكيمياء والأحياء والمزيد — بما في ذلك مهارة [A-Evolve](https://github.com/A-EVO-Lab/a-evolve) للتطور الذكي ساهم بها المجتمع. حمّل مهاراتك عبر `researchclaw skills install` أو ضع `SKILL.md` في `.claude/skills/`. انظر [مكتبة المهارات](#-مكتبة-المهارات).
+- **[03/30/2026]** **تحميل مرن للمهارات** — يدعم AutoResearchClaw الآن تحميل مهارات مفتوحة المصدر ومخصصة من أي تخصص لتعزيز تجربتك البحثية. 20 مهارة مُحمّلة مسبقاً متضمنة كمراجع جاهزة للاستخدام، تغطي الكتابة العلمية وتصميم التجارب والكيمياء والأحياء والمزيد — بما في ذلك مهارة [A-Evolve](https://github.com/A-EVO-Lab/a-evolve) للتطور الذكي ساهم بها المجتمع. حمّل مهاراتك عبر `researchclaw skills install` أو ضع `SKILL.md` في `.claude/skills/`. انظر [مكتبة المهارات](#-مكتبة-المهارات).
 - **[03/22/2026]** [v0.3.2](https://github.com/aiming-lab/AutoResearchClaw/releases/tag/v0.3.2) — **دعم متعدد المنصات + استقرار كبير** — يعمل AutoResearchClaw الآن مع أي وكيل متوافق مع ACP (Claude Code، Codex CLI، Copilot CLI، Gemini CLI، Kimi CLI) ويدعم منصات المراسلة (Discord، Telegram، Lark، WeChat) عبر جسر OpenClaw. واجهة خلفية جديدة لتوليد الكود عبر CLI-agent تفوّض المرحلتين 10 و13 لوكلاء CLI خارجيين مع التحكم في الميزانية وإدارة المهلة الزمنية. يتضمن نظام مكافحة التلفيق (VerifiedRegistry + حلقة تشخيص وإصلاح التجارب)، 100+ إصلاح أخطاء، إعادة هيكلة modular executor، كشف تلقائي لـ `--resume`، تعزيز إعادة محاولات LLM، وإصلاحات المجتمع.
 
 <details>
@@ -528,7 +533,7 @@ researchclaw run --config config.arc.yaml --topic "Your idea" --auto-approve
 
 ## 🧩 مكتبة المهارات
 
-يدعم AutoResearchClaw الآن تحميل **مهارات مفتوحة المصدر ومخصصة** لتعزيز تجربتك البحثية. نوفر أيضاً **19 مهارة مُدمجة مُحمّلة مسبقاً** (الكتابة العلمية، البحث في الأدبيات، الكيمياء، الأحياء، والمزيد) كمراجع جاهزة للاستخدام، توفر درجة عالية من المرونة فوراً. عطّل أي مهارة بإضافة `enabled: false` إلى بيانات YAML الوصفية.
+يدعم AutoResearchClaw الآن تحميل **مهارات مفتوحة المصدر ومخصصة** لتعزيز تجربتك البحثية. نوفر أيضاً **20 مهارة مُدمجة مُحمّلة مسبقاً** (الكتابة العلمية، البحث في الأدبيات، الكيمياء، الأحياء، والمزيد) كمراجع جاهزة للاستخدام، توفر درجة عالية من المرونة فوراً. عطّل أي مهارة بإضافة `enabled: false` إلى بيانات YAML الوصفية.
 
 **نماذج من المهارات المُدمجة:**
 
@@ -538,7 +543,7 @@ researchclaw run --config config.arc.yaml --topic "Your idea" --auto-approve
 | **التخصص** | `chemistry-rdkit` | تحليل جزيئي، SMILES، بصمات جزيئية، اكتشاف الأدوية |
 | **التجارب** | `literature-search` | مراجعة منهجية، منهجية PRISMA |
 
-> شاهد جميع المهارات الـ 19 باستخدام `researchclaw skills list`.
+> شاهد جميع المهارات الـ 20 باستخدام `researchclaw skills list`.
 
 ### تحميل مهاراتك الخاصة
 
@@ -758,24 +763,6 @@ openclaw_bridge:
 
 ---
 
-## ⚠️ الأخلاقيات والاستخدام المسؤول
-
-AutoResearchClaw هو أداة مساعدة في البحث، وليس بديلاً عن الباحثين البشريين. نطلب من جميع المستخدمين الالتزام بالمبادئ التالية:
-
-**النزاهة الأكاديمية.** يجب التعامل مع الأوراق البحثية التي يولدها AutoResearchClaw كمسودات تتطلب مراجعة بشرية شاملة والتحقق منها وتعديلها قبل التقديم. يتحمل المؤلفون المدرجون في الورقة المسؤولية الكاملة عن محتواها وادعاءاتها ودقتها. قد يؤدي استخدام نص مُولَّد بالذكاء الاصطناعي دون إشراف بشري كافٍ أو إفصاح إلى انتهاك سياسات النزاهة الأكاديمية لمؤسستك أو المؤتمر المستهدف.
-
-**الشفافية والإفصاح.** نوصي بشدة بالإفصاح عن استخدام AutoResearchClaw (أو أي مساعدة من الذكاء الاصطناعي) في المخطوطات، وفقاً لسياسات المؤتمر المستهدف (على سبيل المثال، تشترط NeurIPS وICML وICLR ومؤتمرات كبرى أخرى الآن الإفصاح عن مساعدة الذكاء الاصطناعي في الكتابة). يوجد نظام Co-Pilot مع الإنسان في الحلقة تحديداً للحفاظ على سيطرة بشرية ذات معنى على قرارات البحث.
-
-**الاستشهاد والإسناد.** يتحقق AutoResearchClaw من الاستشهادات عبر خط أنابيب من 4 طبقات، لكن لا يوجد نظام آلي مثالي. يجب على المستخدمين التحقق يدوياً قبل التقديم من أن جميع الاستشهادات حقيقية وذات صلة ومُستشهد بها بشكل صحيح. الاستشهادات المُلفقة أو المنسوبة خطأً تقوض الثقة العلمية.
-
-**مخاطر سوء الاستخدام.** كأي أداة قوية، يمكن إساءة استخدام AutoResearchClaw لإنتاج أبحاث منخفضة الجودة أو مضللة على نطاق واسع. نحن لا ندعم استخدام هذا النظام لإنشاء مصانع أوراق بحثية أو تقديمات احتيالية أو محتوى يهدف إلى التلاعب بمراجعة الأقران. في حالة اكتشاف إساءة استخدام منهجية، نحتفظ بالحق في تحديث الرخصة أو شروط الاستخدام.
-
-**الاستخدام المزدوج.** تثير أنظمة البحث المستقلة أسئلة أوسع حول مستقبل العمل العلمي ومعايير التأليف وعمليات المراجعة. نرحب بمناقشات المجتمع حول هذه المواضيع ونلتزم بتطوير هذه التقنية بشكل مسؤول.
-
-باستخدام AutoResearchClaw، فإنك توافق على استخدامه بطريقة تتوافق مع هذه المبادئ والإرشادات الأخلاقية لمؤسستك ومجتمعك البحثي.
-
----
-
 ## 📄 الرخصة
 
 MIT — راجع [LICENSE](../LICENSE) للتفاصيل.
@@ -787,12 +774,14 @@ MIT — راجع [LICENSE](../LICENSE) للتفاصيل.
 إذا وجدت AutoResearchClaw مفيداً، يرجى الاستشهاد:
 
 ```bibtex
-@misc{liu2026autoresearchclaw,
-  author       = {Liu, Jiaqi and Xia, Peng and Han, Siwei and Qiu, Shi and Zhang, Letian and Chen, Guiming and Tu, Haoqin and Yang, Xinyu and Zhou, Jiawei and Zhu, Hongtu and Li, Yun and Zhang, Jiaheng and Zhou, Yuyin and Zheng, Zeyu and Xie, Cihang and Ding, Mingyu and Yao, Huaxiu},
-  title        = {AutoResearchClaw: Fully Autonomous Research from Idea to Paper},
-  year         = {2026},
-  organization = {GitHub},
-  url          = {https://github.com/aiming-lab/AutoResearchClaw},
+@misc{liu2026autoresearchclawselfreinforcingautonomousresearch,
+      title={AutoResearchClaw: Self-Reinforcing Autonomous Research with Human-AI Collaboration},
+      author={Jiaqi Liu and Shi Qiu and Mairui Li and Bingzhou Li and Haonian Ji and Siwei Han and Xinyu Ye and Peng Xia and Zihan Dong and Congyu Zhang and Letian Zhang and Guiming Chen and Haoqin Tu and Xinyu Yang and Lu Feng and Xujiang Zhao and Haifeng Chen and Jiawei Zhou and Xiao Wang and Weitong Zhang and Hongtu Zhu and Yun Li and Jieru Mei and Hongliang Fei and Jiaheng Zhang and Linjie Li and Linjun Zhang and Yuyin Zhou and Sheng Wang and Caiming Xiong and James Zou and Zeyu Zheng and Cihang Xie and Mingyu Ding and Huaxiu Yao},
+      year={2026},
+      eprint={2605.20025},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2605.20025},
 }
 ```
 

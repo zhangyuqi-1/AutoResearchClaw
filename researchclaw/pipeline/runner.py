@@ -450,6 +450,15 @@ def execute_pipeline(
     started = False
     total_stages = len(STAGE_SEQUENCE)
 
+    # Force the domain detector to honor a deployed profile (if any) so
+    # every stage picks the same adapter.  Safe no-op when empty.
+    try:
+        from researchclaw.domains.detector import set_forced_profile
+        forced = getattr(config.project, "profile", "") or ""
+        set_forced_profile(forced)
+    except Exception:  # noqa: BLE001
+        pass
+
     # ── Integration hooks: EventLog, ExperimentMemory, CostTracker ──
     event_log = None
     try:
@@ -664,6 +673,14 @@ def execute_pipeline(
             stage == Stage.RESULT_ANALYSIS
             and result.status == StageStatus.DONE
             and config.experiment.repair.enabled
+            # Agent-based sandboxes (collider_agent / biology_agent / stat_agent)
+            # write a canonical results.json atomically in stage 12.  Stage-14
+            # repair would just iterate on python source files that the agent
+            # never executed, then call sandbox.run_project() — which for agent
+            # sandboxes redundantly re-spawns the whole agent.  Skip the
+            # python-code repair loop entirely; the proceed-or-reject decision
+            # belongs in stage 15 RESEARCH_DECISION.
+            and config.experiment.mode not in ("collider_agent", "biology_agent", "stat_agent")
         ):
             _run_experiment_diagnosis(run_dir, config, run_id)
 
@@ -701,6 +718,18 @@ def execute_pipeline(
                 _promote_best_stage14(run_dir, config)
             elif pivot_count < MAX_DECISION_PIVOTS:
                 rollback_target = DECISION_ROLLBACK[result.decision]
+                # Agent-based modes: REFINE means re-run the agent atomically.
+                # Stage 13 ITERATIVE_REFINE is a no-op for these modes (it
+                # would refine python files the agent never executed), so
+                # routing REFINE there wastes a pipeline cycle.  Send REFINE
+                # straight back to EXPERIMENT_RUN so the sandbox re-spawns
+                # claude with the REPAIR_PROMPT.md the requirements gate
+                # just wrote.
+                if (
+                    config.experiment.mode in ("collider_agent", "biology_agent", "stat_agent")
+                    and result.decision == "refine"
+                ):
+                    rollback_target = Stage.EXPERIMENT_RUN
                 _record_decision_history(
                     run_dir, result.decision, rollback_target, pivot_count + 1
                 )
@@ -716,9 +745,20 @@ def execute_pipeline(
                     f"rollback to {rollback_target.name} "
                     f"(attempt {pivot_count + 1}/{MAX_DECISION_PIVOTS})"
                 )
-                # Version existing stage directories before overwriting
+                # Version existing stage directories before overwriting.
+                # Agent-mode REFINE preserves the stage-12 workspace via
+                # incremental snapshot (copytree, not rename) so the
+                # rerunning sandbox can read prior model files / CSVs / KO
+                # tables instead of starting from a blank workspace.  This
+                # is what makes the requirements-gate retry usefully
+                # incremental rather than just a stochastic resample.
+                _agent_refine = (
+                    config.experiment.mode in ("collider_agent", "biology_agent", "stat_agent")
+                    and result.decision == "refine"
+                )
                 _version_rollback_stages(
-                    run_dir, rollback_target, pivot_count + 1
+                    run_dir, rollback_target, pivot_count + 1,
+                    incremental=_agent_refine,
                 )
                 # Recurse from rollback target
                 pivot_results = execute_pipeline(
@@ -902,6 +942,32 @@ def _package_deliverables(
 
     packaged: list[str] = []
 
+    # --- 0. Resolve effective conference template ---
+    # Mirrors the stage-22 domain-aware override: when the topic belongs to a
+    # non-ML domain (hep_ph, etc.) and the user has left the default
+    # neurips_2025, swap in the domain's preferred physics template so the
+    # bundled .sty, regenerated .tex, and manifest are all consistent.
+    effective_conf = config.export.target_conference
+    try:
+        from researchclaw.domains.detector import detect_domain as _dd_detect
+        from researchclaw.domains.prompt_adapter import get_adapter as _dd_adapter
+
+        _dd_dom = _dd_detect(topic=config.research.topic)
+        _dd_blocks = _dd_adapter(_dd_dom).get_export_publish_blocks(
+            {"topic": config.research.topic}
+        )
+        _pref_tpl = (_dd_blocks.preferred_template or "").strip()
+        if _pref_tpl and effective_conf == "neurips_2025":
+            effective_conf = _pref_tpl
+            logger.info(
+                "Deliverables: domain=%s — overriding target_conference "
+                "'neurips_2025' → '%s'.",
+                getattr(_dd_dom, "domain_id", "?"),
+                effective_conf,
+            )
+    except Exception:  # noqa: BLE001
+        logger.debug("Deliverables: domain-aware template override skipped")
+
     # --- 1. Final paper (Markdown) ---
     # Prefer verified version (stage 23) over base version (stage 22)
     paper_md = None
@@ -937,7 +1003,7 @@ def _package_deliverables(
             from researchclaw.templates import get_template, markdown_to_latex
             from researchclaw.pipeline.executor import _extract_paper_title
 
-            tpl = get_template(config.export.target_conference)
+            tpl = get_template(effective_conf)
             v_text = verified_md.read_text(encoding="utf-8")
             tex_content = markdown_to_latex(
                 v_text,
@@ -1032,7 +1098,7 @@ def _package_deliverables(
     try:
         from researchclaw.templates import get_template
 
-        tpl = get_template(config.export.target_conference)
+        tpl = get_template(effective_conf)
         style_files = tpl.get_style_files()
         for sf in style_files:
             shutil.copy2(sf, dest / sf.name)
@@ -1151,12 +1217,12 @@ def _package_deliverables(
     # --- Write manifest ---
     manifest = {
         "run_id": run_id,
-        "target_conference": config.export.target_conference,
+        "target_conference": effective_conf,
         "files": packaged,
         "generated": _utcnow_iso(),
         "notes": {
             "paper_final.md": "Final paper in Markdown format",
-            "paper.tex": f"Conference-ready LaTeX ({config.export.target_conference})",
+            "paper.tex": f"Conference-ready LaTeX ({effective_conf})",
             "references.bib": "BibTeX bibliography (verified citations only)",
             "code/": "Experiment source code with requirements.txt",
             "verification_report.json": "Citation integrity & relevance verification",
@@ -1379,30 +1445,47 @@ def _write_stage24_submission_archive(
 
 
 def _version_rollback_stages(
-    run_dir: Path, rollback_target: Stage, attempt: int
+    run_dir: Path,
+    rollback_target: Stage,
+    attempt: int,
+    *,
+    incremental: bool = False,
 ) -> None:
-    """Rename stage directories that will be overwritten by a PIVOT/REFINE.
+    """Snapshot stage directories that will be re-executed by a PIVOT/REFINE
+    or by an explicit incremental re-entry.
 
-    For example, if rolling back to Stage 8 (attempt 2), renames:
-      stage-08/ → stage-08_v1/
-      stage-09/ → stage-09_v1/
-      ... up to stage-15/
+    Default behavior renames ``stage-NN/`` to ``stage-NN_v{attempt}/`` so the
+    next run starts from a clean slate.
+
+    When ``incremental=True``, directories whose number is >= EXPERIMENT_RUN (12)
+    are *copied* via ``shutil.copytree`` instead of renamed, so the live
+    stage-12 workspace persists across re-entries. Stages before EXPERIMENT_RUN
+    in the rollback range are still renamed.
     """
     import shutil
 
     rollback_num = int(rollback_target)
-    # Stages from rollback target up to RESEARCH_DECISION (15) will be rerun
     decision_num = int(Stage.RESEARCH_DECISION)
+    exp_run_num = int(Stage.EXPERIMENT_RUN)
 
     for stage_num in range(rollback_num, decision_num + 1):
         stage_dir = run_dir / f"stage-{stage_num:02d}"
-        if stage_dir.exists():
-            version_dir = run_dir / f"stage-{stage_num:02d}_v{attempt}"
-            if version_dir.exists():
-                shutil.rmtree(version_dir)
+        if not stage_dir.exists():
+            continue
+        version_dir = run_dir / f"stage-{stage_num:02d}_v{attempt}"
+        if version_dir.exists():
+            shutil.rmtree(version_dir)
+        if incremental and stage_num >= exp_run_num:
+            shutil.copytree(stage_dir, version_dir, symlinks=False)
+            logger.debug(
+                "Snapshotted (copytree) %s → %s (incremental)",
+                stage_dir.name,
+                version_dir.name,
+            )
+        else:
             stage_dir.rename(version_dir)
             logger.debug(
-                "Versioned %s → %s", stage_dir.name, version_dir.name
+                "Versioned (rename) %s → %s", stage_dir.name, version_dir.name
             )
 
 

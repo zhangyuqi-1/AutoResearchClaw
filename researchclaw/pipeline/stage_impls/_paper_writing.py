@@ -174,6 +174,10 @@ def _execute_paper_outline(
         except (json.JSONDecodeError, KeyError):
             pass
 
+    # Venue guidance is now carried natively by the active prompt bank
+    # (ML bank -> NeurIPS/ICML, HEP bank -> JHEP/PRD). No adapter overlay.
+    _outline_venue_guidance = ""
+
     if llm is not None:
         _pm = prompts or PromptManager()
         # IMP-20: Pass academic style guide block for outline stage
@@ -191,6 +195,7 @@ def _execute_paper_outline(
             analysis=analysis,
             decision=decision,
             academic_style_guide=_asg,
+            venue_guidance=_outline_venue_guidance,
         )
         resp = _chat_with_prompt(
             llm,
@@ -421,14 +426,21 @@ def _write_paper_sections(
     outline: str = "",
     model_name: str = "",
     submission_profile: str = "default",
+    venue_label: str = "NeurIPS/ICML",
+    venue_guidance: str = "",
+    is_hep: bool = False,
 ) -> str:
     """Write a conference-grade paper in 3 sequential LLM calls.
 
-    Call 1: Title + Abstract + Introduction + Related Work
-    Call 2: Method + Experiments (with full experiment data)
-    Call 3: Results + Discussion + Limitations + Conclusion
+    ML path (default):
+      Call 1: Title + Abstract + Introduction + Related Work
+      Call 2: Method + Experiments
+      Call 3: Results + Discussion + Limitations + Conclusion
 
-    Each call receives prior sections for coherence.
+    HEP path (when ``is_hep=True``, i.e. hep_ph domain detected):
+      Call 1: Title + Abstract + Introduction
+      Call 2: Model / Theoretical framework + Phenomenology / Computational setup
+      Call 3: Results + Discussion + Conclusions (no Broader Impact, no Related Work block)
     """
     # Render writing_structure block for injection
     try:
@@ -446,6 +458,7 @@ def _write_paper_sections(
         citation_instruction=citation_instruction,
         writing_structure=_writing_structure,
         outline=outline,
+        venue_guidance=venue_guidance,
     ).system
 
     sections: list[str] = []
@@ -480,27 +493,57 @@ def _write_paper_sections(
     shared_submission_rules = _shared_submission_rules(submission_profile)
     call1_plan, call3_plan = _section_plan_for_profile(submission_profile)
 
-    # --- Call 1: Title + Abstract + Introduction + Related Work ---
-    call1_user = (
-        f"{preamble}\n\n"
-        f"{topic_constraint}"
-        f"{citation_instruction}\n\n"
-        f"{exact_title_instruction}"
-        f"{title_guidelines}\n\n"
-        f"{academic_style_guide}\n"
-        f"{narrative_writing_rules}\n"
-        f"{anti_hedging_rules}\n"
-        f"{anti_repetition_rules}\n\n"
-        f"{shared_submission_rules}"
-        "Write the following sections of a NeurIPS/ICML-quality paper in markdown. "
-        "Follow the LENGTH REQUIREMENTS strictly:\n\n"
-        f"{call1_plan.rstrip()}{abstract_structure}\n\n"
-        f"Outline:\n{outline}\n\n"
-        "Output markdown with ## headers. Do NOT include a References section.\n"
-        "IMPORTANT: Start DIRECTLY with '## Title'. Do NOT include any preamble, "
-        "data verification, condition listing, or metric enumeration before the title. "
-        "The paper should read like a published manuscript, not a data report."
-    )
+    # --- Call 1: Title + Abstract + Introduction (+ Related Work for ML) ---
+    if is_hep:
+        call1_user = (
+            f"{preamble}\n\n"
+            f"{topic_constraint}"
+            f"{citation_instruction}\n\n"
+            f"{exact_title_instruction}"
+            f"{academic_style_guide}\n"
+            f"{narrative_writing_rules}\n"
+            f"{anti_hedging_rules}\n"
+            f"{anti_repetition_rules}\n\n"
+            f"{shared_submission_rules}"
+            f"Write the following sections of a {venue_label}-quality HEP phenomenology "
+            "paper in markdown. Use the JHEP/PRD convention — prior literature is woven "
+            "into the Introduction (NO separate 'Related Work' section).\n\n"
+            "1. **Title** (concise physics phrasing describing the model and the main "
+            "observable; avoid ML-style catchy acronym+colon titles).\n"
+            "2. **Abstract** (single paragraph, 150-250 words: motivation -> model -> "
+            "method -> key numerical result in natural units -> implication for upcoming "
+            "experiments). NO bullets.\n"
+            "3. **Introduction** (800-1200 words): physics motivation, brief review of "
+            "the relevant literature with 15-25 citations (ATLAS/CMS/LZ/XENONnT/Fermi-LAT "
+            "and recent JHEP/PRD theory work), statement of what the paper contributes. "
+            "The review of prior work goes HERE; do NOT open a 'Related Work' section.\n\n"
+            f"Outline:\n{outline}\n\n"
+            "Output markdown with ## headers. Do NOT include a References section.\n"
+            "Start DIRECTLY with '## Title'. All equations must be LaTeX; all numerical "
+            "quantities in natural units (GeV, pb, cm^2). Do NOT include 'Broader Impact' "
+            "or 'Reproducibility Checklist' sections."
+        )
+    else:
+        call1_user = (
+            f"{preamble}\n\n"
+            f"{topic_constraint}"
+            f"{citation_instruction}\n\n"
+            f"{exact_title_instruction}"
+            f"{title_guidelines}\n\n"
+            f"{academic_style_guide}\n"
+            f"{narrative_writing_rules}\n"
+            f"{anti_hedging_rules}\n"
+            f"{anti_repetition_rules}\n\n"
+            f"{shared_submission_rules}"
+            f"Write the following sections of a {venue_label}-quality paper in markdown. "
+            "Follow the LENGTH REQUIREMENTS strictly:\n\n"
+            f"{call1_plan.rstrip()}{abstract_structure}\n\n"
+            f"Outline:\n{outline}\n\n"
+            "Output markdown with ## headers. Do NOT include a References section.\n"
+            "IMPORTANT: Start DIRECTLY with '## Title'. Do NOT include any preamble, "
+            "data verification, condition listing, or metric enumeration before the title. "
+            "The paper should read like a published manuscript, not a data report."
+        )
     # R14-1: Higher token limit for reasoning models
     _paper_max_tokens = 12000
     if any(model_name.startswith(p) for p in ("gpt-5", "o3", "o4")):
@@ -522,35 +565,65 @@ def _write_paper_sections(
     sections.append(part1)
     logger.info("Stage 17: Part 1 (Title+Abstract+Intro+Related Work) — %d chars", len(part1))
 
-    # --- Call 2: Method + Experiments ---
-    call2_user = (
-        f"{preamble}\n\n"
-        f"{topic_constraint}"
-        f"{exp_metrics_instruction}\n\n"
-        f"{narrative_writing_rules}\n"
-        f"{anti_hedging_rules}\n\n"
-        f"{shared_submission_rules}"
-        # IMP-21: Citation instruction for Method + Experiments
-        "CITATION REQUIREMENT: The Method section MUST cite at least 3-5 related "
-        "technical papers (foundations your method builds on). The Experiments section "
-        "MUST cite baseline method papers. Use [cite_key] syntax.\n"
-        f"{citation_instruction}\n\n"
-        "You are continuing a paper. The sections written so far are:\n\n"
-        f"---\n{part1}\n---\n\n"
-        "Now write the next sections, maintaining consistency with the above:\n\n"
-        "5. **Method** (1000-1500 words): formal problem definition with mathematical notation "
-        "($x$, $\\theta$, etc.), detailed algorithm description with equations, step-by-step procedure, "
-        "complexity analysis, design rationale for key choices. Include algorithm pseudocode if applicable. "
-        "Write as FLOWING PROSE — do NOT use bullet-point lists for method components.\n"
-        "6. **Experiments** (800-1200 words): detailed experimental setup, datasets with statistics "
-        "(size, splits, features), all baselines and their implementations, hyperparameter settings "
-        "in a markdown table, evaluation metrics with mathematical definitions, hardware and runtime info.\n"
-        "METHOD NAMES IN TABLES: Use SHORT abbreviations (4-8 chars) for method names "
-        "in tables. Define abbreviation mappings in a footnote. "
-        "NEVER put method names longer than 20 characters in table cells.\n\n"
-        f"Outline:\n{outline}\n\n"
-        "Output markdown with ## headers. Continue from where Part 1 ended."
-    )
+    # --- Call 2: Method + Experiments (ML)  OR  Model + Phenomenology (HEP) ---
+    if is_hep:
+        call2_user = (
+            f"{preamble}\n\n"
+            f"{topic_constraint}"
+            f"{exp_metrics_instruction}\n\n"
+            f"{narrative_writing_rules}\n"
+            f"{anti_hedging_rules}\n\n"
+            f"{shared_submission_rules}"
+            "CITATION REQUIREMENT: The Model section MUST cite the original paper(s) "
+            "defining the Lagrangian / EFT operators being studied. The Phenomenology "
+            "section MUST cite each experimental bound invoked (ATLAS/CMS/LZ/XENONnT/"
+            "Fermi-LAT original papers, not reviews). Use [cite_key] syntax.\n"
+            f"{citation_instruction}\n\n"
+            "You are continuing an HEP phenomenology paper. The sections written so far are:\n\n"
+            f"---\n{part1}\n---\n\n"
+            "Now write the next sections:\n\n"
+            "4. **Model / Theoretical framework** (1200-1800 words): the Lagrangian density "
+            "(LaTeX, numbered equations), particle content, gauge structure, free parameters "
+            "and their allowed ranges. Provide the Feynman rules or EFT operator coefficients "
+            "relevant to the observables considered. Write as FLOWING PROSE with numbered "
+            "equations — do NOT use bullet lists.\n"
+            "5. **Phenomenology / Computational setup** (800-1200 words): the observables "
+            "(cross sections, decay widths, relic density, direct-detection rates) and the "
+            "formulas or tool-chain used to compute them. List every experimental constraint "
+            "imposed with explicit CL level and reference. Units MUST be natural (GeV, pb, "
+            "cm^2, Omega_h^2).\n\n"
+            f"Outline:\n{outline}\n\n"
+            "Output markdown with ## headers. Continue from where Part 1 ended."
+        )
+    else:
+        call2_user = (
+            f"{preamble}\n\n"
+            f"{topic_constraint}"
+            f"{exp_metrics_instruction}\n\n"
+            f"{narrative_writing_rules}\n"
+            f"{anti_hedging_rules}\n\n"
+            f"{shared_submission_rules}"
+            # IMP-21: Citation instruction for Method + Experiments
+            "CITATION REQUIREMENT: The Method section MUST cite at least 3-5 related "
+            "technical papers (foundations your method builds on). The Experiments section "
+            "MUST cite baseline method papers. Use [cite_key] syntax.\n"
+            f"{citation_instruction}\n\n"
+            "You are continuing a paper. The sections written so far are:\n\n"
+            f"---\n{part1}\n---\n\n"
+            "Now write the next sections, maintaining consistency with the above:\n\n"
+            "5. **Method** (1000-1500 words): formal problem definition with mathematical notation "
+            "($x$, $\\theta$, etc.), detailed algorithm description with equations, step-by-step procedure, "
+            "complexity analysis, design rationale for key choices. Include algorithm pseudocode if applicable. "
+            "Write as FLOWING PROSE — do NOT use bullet-point lists for method components.\n"
+            "6. **Experiments** (800-1200 words): detailed experimental setup, datasets with statistics "
+            "(size, splits, features), all baselines and their implementations, hyperparameter settings "
+            "in a markdown table, evaluation metrics with mathematical definitions, hardware and runtime info.\n"
+            "METHOD NAMES IN TABLES: Use SHORT abbreviations (4-8 chars) for method names "
+            "in tables. Define abbreviation mappings in a footnote. "
+            "NEVER put method names longer than 20 characters in table cells.\n\n"
+            f"Outline:\n{outline}\n\n"
+            "Output markdown with ## headers. Continue from where Part 1 ended."
+        )
     try:
         resp2 = _chat_with_prompt(llm, system, call2_user, max_tokens=_paper_max_tokens, retries=1)
         part2 = resp2.content.strip()
@@ -563,32 +636,70 @@ def _write_paper_sections(
     sections.append(part2)
     logger.info("Stage 17: Part 2 (Method+Experiments) — %d chars", len(part2))
 
-    # --- Call 3: Results + Discussion + Limitations + Conclusion ---
-    call3_user = (
-        f"{preamble}\n\n"
-        f"{topic_constraint}"
-        f"{exp_metrics_instruction}\n\n"
-        f"{narrative_writing_rules}\n"
-        f"{anti_hedging_rules}\n"
-        f"{anti_repetition_rules}\n\n"
-        f"{shared_submission_rules}"
-        # IMP-21: Citation instruction for Results + Discussion + Conclusion
-        "CITATION REQUIREMENT: The Discussion section MUST cite at least 3-5 papers "
-        "when comparing findings with prior work. The Conclusion may cite 1-2 "
-        "foundational references.\n"
-        f"{citation_instruction}\n\n"
-        "You are completing a paper. The sections written so far are:\n\n"
-        f"---\n{part1}\n\n{part2}\n---\n\n"
-        "Now write the final sections, maintaining consistency:\n\n"
-        f"{call3_plan}\n"
-        "CRITICAL FORMATTING RULES FOR ALL SECTIONS:\n"
-        "- Write as FLOWING PROSE paragraphs, NOT bullet-point lists\n"
-        "- NEVER dump raw metric paths like 'config/method_name/seed_3/primary_metric'\n"
-        "- All numbers must be rounded to 4 decimal places maximum\n"
-        "- Every table MUST have a descriptive caption (not just 'Table 1')\n"
-        "- Use \\begin{algorithm} or pseudocode notation, NOT \\begin{verbatim}\n\n"
-        "Output markdown with ## headers. Do NOT include a References section."
-    )
+    # --- Call 3: Results + Discussion + (Limitations) + Conclusion ---
+    if is_hep:
+        call3_user = (
+            f"{preamble}\n\n"
+            f"{topic_constraint}"
+            f"{exp_metrics_instruction}\n\n"
+            f"{narrative_writing_rules}\n"
+            f"{anti_hedging_rules}\n"
+            f"{anti_repetition_rules}\n\n"
+            f"{shared_submission_rules}"
+            "CITATION REQUIREMENT: Discussion must cite 3-5 prior JHEP/PRD phenomenology "
+            "analyses that studied the same or neighbouring parameter space. Cite each "
+            "experimental bound plotted on the exclusion figures.\n"
+            f"{citation_instruction}\n\n"
+            "You are completing an HEP phenomenology paper. Sections so far:\n\n"
+            f"---\n{part1}\n\n{part2}\n---\n\n"
+            "Now write the final sections:\n\n"
+            "6. **Results** (800-1200 words): report parameter-space scans and 95% CL "
+            "exclusion contours. Include tabulated predictions and a headline log-log "
+            "exclusion plot (use ![Caption](charts/filename.png) markdown). Overlay "
+            "current bounds and projected sensitivities. Discuss complementarity between "
+            "direct, indirect, and collider probes.\n"
+            "7. **Discussion** (400-800 words): comparison with earlier work, theoretical "
+            "and experimental uncertainties (QCD scale, PDF, nuclear form factors, "
+            "astrophysical J-factors), comment on the tension / consistency with "
+            "independent constraints.\n"
+            "8. **Conclusions** (200-400 words): summarise the main physical findings; "
+            "state falsifiable predictions for HL-LHC / DARWIN / LZ / CTA and the "
+            "timescale on which they can test the model.\n\n"
+            "CRITICAL FORMATTING RULES:\n"
+            "- Use FLOWING PROSE, not bullet lists, except for equation labels.\n"
+            "- All numerical values in natural units; keep 3-4 significant figures.\n"
+            "- Figures referenced with 'As shown in Fig. 1, ...' style.\n"
+            "- Every table caption is descriptive (not 'Table 1').\n"
+            "- Do NOT add 'Broader Impact', 'Reproducibility Checklist', 'Ethics', or "
+            "'Societal Impact' sections.\n\n"
+            "Output markdown with ## headers. Do NOT include a References section."
+        )
+    else:
+        call3_user = (
+            f"{preamble}\n\n"
+            f"{topic_constraint}"
+            f"{exp_metrics_instruction}\n\n"
+            f"{narrative_writing_rules}\n"
+            f"{anti_hedging_rules}\n"
+            f"{anti_repetition_rules}\n\n"
+            f"{shared_submission_rules}"
+            # IMP-21: Citation instruction for Results + Discussion + Conclusion
+            "CITATION REQUIREMENT: The Discussion section MUST cite at least 3-5 papers "
+            "when comparing findings with prior work. The Conclusion may cite 1-2 "
+            "foundational references.\n"
+            f"{citation_instruction}\n\n"
+            "You are completing a paper. The sections written so far are:\n\n"
+            f"---\n{part1}\n\n{part2}\n---\n\n"
+            "Now write the final sections, maintaining consistency:\n\n"
+            f"{call3_plan}\n"
+            "CRITICAL FORMATTING RULES FOR ALL SECTIONS:\n"
+            "- Write as FLOWING PROSE paragraphs, NOT bullet-point lists\n"
+            "- NEVER dump raw metric paths like 'config/method_name/seed_3/primary_metric'\n"
+            "- All numbers must be rounded to 4 decimal places maximum\n"
+            "- Every table MUST have a descriptive caption (not just 'Table 1')\n"
+            "- Use \\begin{algorithm} or pseudocode notation, NOT \\begin{verbatim}\n\n"
+            "Output markdown with ## headers. Do NOT include a References section."
+        )
     try:
         resp3 = _chat_with_prompt(llm, system, call3_user, max_tokens=_paper_max_tokens, retries=1)
         part3 = resp3.content.strip()
@@ -2071,9 +2182,15 @@ def _execute_paper_draft(
         )
         logger.info("Stage 17: Literature-first mode enabled for survey/review topic")
 
+    # --- Venue label derived from the active prompt bank ---
+    # Domain-specific venue prose now lives in the prompt bank itself; here we
+    # only need the short label and the HEP flag for paper section structuring.
     if llm is not None:
         _pm = prompts or PromptManager()
         topic_constraint = _pm.block("topic_constraint", topic=config.research.topic)
+        _paper_is_hep = _pm.domain == "hep_ph"
+        _paper_venue_label = "JHEP" if _paper_is_hep else "NeurIPS/ICML"
+        _paper_venue_guidance = ""
 
         # --- Section-by-section writing (3 calls) for conference-grade depth ---
         draft = _write_paper_sections(
@@ -2088,6 +2205,9 @@ def _execute_paper_draft(
             outline=outline,
             model_name=config.llm.primary_model,
             submission_profile=config.export.submission_profile,
+            venue_label=_paper_venue_label,
+            venue_guidance=_paper_venue_guidance,
+            is_hep=_paper_is_hep,
         )
 
         # R7: Strip LLM-generated References section — it often fabricates arXiv IDs.

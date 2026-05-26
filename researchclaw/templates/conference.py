@@ -40,7 +40,9 @@ class ConferenceTemplate:
         authors: str,
         abstract: str,
     ) -> str:
-        # Style options (e.g. "preprint") go on the style package, not documentclass
+        # Style options go on the style package when one is declared, otherwise
+        # fall through to documentclass options (revtex pattern:
+        # \documentclass[aps,prd,reprint]{revtex4-2}).
         options = f"[{self.style_options}]" if self.style_options else ""
         pkg_lines = "\n".join(f"\\usepackage{{{p}}}" for p in self.extra_packages)
 
@@ -49,11 +51,19 @@ class ConferenceTemplate:
         # Substitute __TITLE__ placeholder in preamble_extra (e.g. ICML running title)
         preamble_extra = self.preamble_extra.replace("__TITLE__", title)
 
-        style_line = (
-            f"\\usepackage{options}{{{self.style_package}}}\n"
-            if self.style_package
-            else ""
-        )
+        if self.style_package:
+            docclass_line = f"\\documentclass{{{self.document_class}}}\n"
+            style_line = f"\\usepackage{options}{{{self.style_package}}}\n"
+        else:
+            # No separate style package — options attach to documentclass
+            # (e.g. revtex4-2 for PRD/PRL/PRX).
+            docclass_line = (
+                f"\\documentclass{options}{{{self.document_class}}}\n"
+                if options
+                else f"\\documentclass{{{self.document_class}}}\n"
+            )
+            style_line = ""
+
         style_comment = (
             f"% Style file: {self.style_download_url}\n"
             if self.style_download_url
@@ -63,21 +73,36 @@ class ConferenceTemplate:
         # BUG-51 fix: ICML's \begin{icmlauthorlist} is an environment that
         # must appear AFTER \begin{document}.  For non-ICML templates the
         # \author{} command is a preamble declaration and stays before.
+        # revtex also places \author{} after \begin{document}, typically
+        # before \title{} (handled via post_doc_author).
         if self.author_format == "icml":
             preamble_author = ""
             post_doc_author = f"{author_block}\n\n"
+        elif self.author_format == "revtex":
+            preamble_author = ""
+            # revtex order: \title before \author, both after \begin{document}
+            post_doc_author = (
+                f"\\title{{{title}}}\n\n"
+                f"{author_block}\n\n"
+                f"\\date{{\\today}}\n\n"
+            )
         else:
             preamble_author = f"{author_block}\n"
             post_doc_author = ""
 
+        # revtex puts \title inside the document, others in preamble
+        preamble_title = (
+            "" if self.author_format == "revtex" else f"\\title{{{title}}}\n"
+        )
+
         return (
             f"{style_comment}"
-            f"\\documentclass{{{self.document_class}}}\n"
+            f"{docclass_line}"
             f"{style_line}"
             f"{pkg_lines}\n"
             f"{preamble_extra}\n"
             f"\n"
-            f"\\title{{{title}}}\n"
+            f"{preamble_title}"
             f"\n"
             f"{preamble_author}"
             f"\n"
@@ -119,6 +144,17 @@ class ConferenceTemplate:
                 f"\\icmlauthor{{{authors}}}{{aff1}}\n"
                 f"\\end{{icmlauthorlist}}\n"
                 f"\\icmlaffiliation{{aff1}}{{Affiliation}}"
+            )
+        if self.author_format == "jhep":
+            return (
+                f"\\author{{{authors}}}\n"
+                f"\\affiliation{{Affiliation}}\n"
+                f"\\emailAdd{{author@example.com}}"
+            )
+        if self.author_format == "revtex":
+            return (
+                f"\\author{{{authors}}}\n"
+                f"\\affiliation{{Affiliation}}"
             )
         return f"\\author{{{authors}}}"
 
@@ -306,6 +342,152 @@ ICML_2026 = ConferenceTemplate(
 
 # -- Generic (non-ML) --
 
+# -- HEP phenomenology templates --
+#
+# These rely on publisher-provided classes that ship with a standard TeX Live
+# install (revtex4-2, jheppub, svjour3). No .sty files are bundled.
+
+JHEP = ConferenceTemplate(
+    name="jhep",
+    display_name="Journal of High Energy Physics (JHEP)",
+    year=2025,
+    document_class="article",
+    style_package="jheppub",
+    style_options="",
+    extra_packages=(
+        "hyperref",
+        "url",
+        "booktabs",
+        "amsfonts",
+        "amsmath",
+        "amssymb",
+        "graphicx",
+        "xspace",
+        "slashed",
+    ),
+    author_format="jhep",
+    bib_style="JHEP",
+    columns=1,
+    style_download_url="https://jhep.sissa.it/jhep/help/JHEP_TeXclass.jsp",
+    preamble_extra=(
+        "\\usepackage[utf8]{inputenc}\n"
+        "\\usepackage[T1]{fontenc}\n"
+        "\\providecommand{\\GeV}{\\ensuremath{\\mathrm{GeV}}\\xspace}\n"
+        "\\providecommand{\\TeV}{\\ensuremath{\\mathrm{TeV}}\\xspace}\n"
+        "\\providecommand{\\fb}{\\ensuremath{\\mathrm{fb}}\\xspace}\n"
+        "\\providecommand{\\pb}{\\ensuremath{\\mathrm{pb}}\\xspace}"
+    ),
+)
+
+PRD = ConferenceTemplate(
+    name="prd",
+    display_name="Physical Review D (PRD)",
+    year=2025,
+    document_class="revtex4-2",
+    style_package="",
+    style_options="aps,prd,reprint,amsmath,amssymb,nofootinbib,floatfix",
+    extra_packages=(
+        "hyperref",
+        "url",
+        "booktabs",
+        "graphicx",
+        "xspace",
+        "slashed",
+    ),
+    author_format="revtex",
+    bib_style="apsrev4-2",
+    columns=2,
+    style_download_url="https://journals.aps.org/revtex",
+    preamble_extra=(
+        "\\providecommand{\\GeV}{\\ensuremath{\\mathrm{GeV}}\\xspace}\n"
+        "\\providecommand{\\TeV}{\\ensuremath{\\mathrm{TeV}}\\xspace}\n"
+        "\\providecommand{\\fb}{\\ensuremath{\\mathrm{fb}}\\xspace}\n"
+        "\\providecommand{\\pb}{\\ensuremath{\\mathrm{pb}}\\xspace}"
+    ),
+)
+
+PRL = ConferenceTemplate(
+    name="prl",
+    display_name="Physical Review Letters (PRL)",
+    year=2025,
+    document_class="revtex4-2",
+    style_package="",
+    style_options="aps,prl,reprint,amsmath,amssymb,nofootinbib,floatfix",
+    extra_packages=(
+        "hyperref",
+        "url",
+        "booktabs",
+        "graphicx",
+        "xspace",
+        "slashed",
+    ),
+    author_format="revtex",
+    bib_style="apsrev4-2",
+    columns=2,
+    style_download_url="https://journals.aps.org/revtex",
+    preamble_extra=(
+        "\\providecommand{\\GeV}{\\ensuremath{\\mathrm{GeV}}\\xspace}\n"
+        "\\providecommand{\\TeV}{\\ensuremath{\\mathrm{TeV}}\\xspace}"
+    ),
+)
+
+PRX = ConferenceTemplate(
+    name="prx",
+    display_name="Physical Review X (PRX)",
+    year=2025,
+    document_class="revtex4-2",
+    style_package="",
+    style_options="aps,prx,reprint,amsmath,amssymb,nofootinbib,floatfix",
+    extra_packages=(
+        "hyperref",
+        "url",
+        "booktabs",
+        "graphicx",
+        "xspace",
+        "slashed",
+    ),
+    author_format="revtex",
+    bib_style="apsrev4-2",
+    columns=2,
+    style_download_url="https://journals.aps.org/revtex",
+    preamble_extra=(
+        "\\providecommand{\\GeV}{\\ensuremath{\\mathrm{GeV}}\\xspace}\n"
+        "\\providecommand{\\TeV}{\\ensuremath{\\mathrm{TeV}}\\xspace}"
+    ),
+)
+
+EPJC = ConferenceTemplate(
+    name="epjc",
+    display_name="European Physical Journal C (EPJC)",
+    year=2025,
+    document_class="article",
+    style_package="",
+    style_options="",
+    extra_packages=(
+        "hyperref",
+        "url",
+        "booktabs",
+        "amsfonts",
+        "amsmath",
+        "amssymb",
+        "graphicx",
+        "geometry",
+        "xspace",
+        "slashed",
+    ),
+    author_format="neurips",
+    bib_style="spphys",
+    columns=1,
+    style_download_url="https://www.springer.com/journal/10052/submission-guidelines",
+    preamble_extra=(
+        "\\usepackage[utf8]{inputenc}\n"
+        "\\usepackage[T1]{fontenc}\n"
+        "\\usepackage[margin=1in]{geometry}\n"
+        "\\providecommand{\\GeV}{\\ensuremath{\\mathrm{GeV}}\\xspace}"
+    ),
+)
+
+
 GENERIC = ConferenceTemplate(
     name="generic",
     display_name="Generic Academic Paper",
@@ -352,7 +534,25 @@ CONFERENCE_REGISTRY: dict[str, ConferenceTemplate] = {
     "iclr_2025": ICLR_2025,
     "icml_2026": ICML_2026,
     "icml_2025": ICML_2025,
+    # HEP phenomenology templates
+    "jhep": JHEP,
+    "prd": PRD,
+    "prl": PRL,
+    "prx": PRX,
+    "epjc": EPJC,
 }
+
+
+# Templates that should NOT receive the NeurIPS-style reproducibility checklist
+# appended in stage 22. HEP journals, EPJC, and generic have their own norms.
+ML_CHECKLIST_TEMPLATES: frozenset[str] = frozenset({
+    "neurips_2024",
+    "neurips_2025",
+    "icml_2025",
+    "icml_2026",
+    "iclr_2025",
+    "iclr_2026",
+})
 
 
 def get_template(name: str) -> ConferenceTemplate:

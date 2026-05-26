@@ -101,6 +101,21 @@ def _execute_resource_planning(
     )
 
 
+def _estimate_stage12_footprint_bytes(run_dir: Path) -> int:
+    """Sum the on-disk size of stage-12 and any stage-12_v* siblings."""
+    total = 0
+    for d in run_dir.glob("stage-12*"):
+        if not d.is_dir():
+            continue
+        for p in d.rglob("*"):
+            try:
+                if p.is_file():
+                    total += p.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
 def _execute_experiment_run(
     stage_dir: Path,
     run_dir: Path,
@@ -130,6 +145,148 @@ def _execute_experiment_run(
     runs_dir = stage_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     mode = config.experiment.mode
+
+    # ── ColliderAgent physics mode ─────────────────────────────────────
+    if mode == "collider_agent":
+        from researchclaw.experiment.collider_agent_sandbox import ColliderAgentSandbox
+
+        # Read physics prompt from Stage 10 artifact (collider_plan.md)
+        # or fall back to the experiment design plan
+        prompt_text = _read_prior_artifact(run_dir, "collider_plan.md") or ""
+        if not prompt_text:
+            # Try exp_plan.yaml as fallback — Stage 9 artifact
+            prompt_text = _read_prior_artifact(run_dir, "exp_plan.yaml") or ""
+        if not prompt_text:
+            logger.warning(
+                "Stage 12 (collider_agent): no collider_plan.md found — "
+                "using generic placeholder prompt"
+            )
+            prompt_text = (
+                "# Physics Analysis Task\n\n"
+                "Run the collider physics pipeline for the configured topic.\n"
+                "Generate exclusion contours and output figures to output/figures/.\n"
+            )
+
+        ca_cfg = config.experiment.collider_agent
+        workspace = runs_dir / (ca_cfg.working_dir or "collider_workspace")
+
+        # Incremental re-entry: snapshot prior workspace under stage-12_v{N}
+        # BEFORE the sandbox prepares the new prompt, so the merge step can
+        # recover the previous results.json. Only fires when prior workspace
+        # is non-empty (models/ or events/ contain artifacts).
+        if (
+            getattr(ca_cfg, "incremental", False)
+            and workspace.is_dir()
+            and (
+                ((workspace / "models").is_dir() and any((workspace / "models").iterdir()))
+                or ((workspace / "events").is_dir() and any((workspace / "events").iterdir()))
+            )
+        ):
+            import shutil as _shutil_inc
+
+            existing_versions = sorted(
+                p for p in run_dir.glob("stage-12_v*")
+                if p.is_dir() and p.name.replace("stage-12_v", "").isdigit()
+            )
+            next_v = (
+                int(existing_versions[-1].name.replace("stage-12_v", "")) + 1
+                if existing_versions
+                else 1
+            )
+            snap_dir = run_dir / f"stage-12_v{next_v}"
+            try:
+                _shutil_inc.copytree(stage_dir, snap_dir, symlinks=False)
+                logger.info(
+                    "Incremental snapshot: %s → %s",
+                    stage_dir.name,
+                    snap_dir.name,
+                )
+            except OSError as _snap_err:
+                logger.warning(
+                    "Incremental snapshot failed: %s — proceeding without history",
+                    _snap_err,
+                )
+            else:
+                _summary_lines = [
+                    f"timestamp: {_utcnow_iso()}",
+                    "trigger: incremental re-entry",
+                ]
+                _prev_results = runs_dir / "results.json"
+                if _prev_results.is_file():
+                    try:
+                        _pr = json.loads(_prev_results.read_text(encoding="utf-8"))
+                        _summary_lines.append(
+                            f"prior_metrics: {json.dumps(_pr.get('metrics', {}))[:300]}"
+                        )
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                (snap_dir / "INCREMENTAL_SNAPSHOT.txt").write_text(
+                    "\n".join(_summary_lines) + "\n", encoding="utf-8"
+                )
+                # Disk-guard: warn (do not abort) when cumulative footprint > 20 GB
+                _footprint = _estimate_stage12_footprint_bytes(run_dir)
+                _GB = 1024 * 1024 * 1024
+                if _footprint > 20 * _GB:
+                    logger.warning(
+                        "Incremental footprint cumulative across stage-12*/ is "
+                        "%.1f GB. Consider `rm -rf %s/stage-12_v*` to reclaim space.",
+                        _footprint / _GB,
+                        run_dir,
+                    )
+
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        sandbox = ColliderAgentSandbox(ca_cfg, workspace)
+        result = sandbox.run(prompt_text, timeout_sec=ca_cfg.timeout_sec)
+
+        # Read structured results.json written by ColliderAgentSandbox
+        structured_results = None
+        results_json_path = workspace / "results.json"
+        if results_json_path.exists():
+            try:
+                import json as _json
+                structured_results = _json.loads(results_json_path.read_text(encoding="utf-8"))
+                # Copy to runs dir for easy access
+                (runs_dir / "results.json").write_text(
+                    results_json_path.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+            except Exception:  # noqa: BLE001
+                structured_results = None
+
+        if result.returncode == 0 and not result.timed_out:
+            run_status = "completed"
+        elif result.timed_out and result.metrics:
+            run_status = "partial"
+        else:
+            run_status = "failed"
+
+        run_payload: dict[str, Any] = {
+            "run_id": "run-1",
+            "task_id": "collider-agent-main",
+            "status": run_status,
+            "metrics": result.metrics,
+            "elapsed_sec": result.elapsed_sec,
+            "stdout": result.stdout[:4000] if result.stdout else "",
+            "stderr": result.stderr[:2000] if result.stderr else "",
+            "timed_out": result.timed_out,
+            "completed_at": _utcnow_iso(),
+        }
+        if structured_results is not None:
+            run_payload["structured_results"] = structured_results
+
+        import json as _json_io
+        (runs_dir / "run-1.json").write_text(
+            _json_io.dumps(run_payload, indent=2), encoding="utf-8"
+        )
+
+        return StageResult(
+            stage=Stage.EXPERIMENT_RUN,
+            status=StageStatus.DONE,
+            artifacts=("runs/",),
+            evidence_refs=("stage-12/runs/",),
+        )
+    # ── End ColliderAgent mode ──────────────────────────────────────────
+
     if mode in ("sandbox", "docker"):
         # P7: Auto-install missing dependencies before subprocess sandbox
         if mode == "sandbox":
@@ -373,6 +530,64 @@ def _execute_iterative_refine(
             return f
         except (TypeError, ValueError):
             return None
+
+    # Agent-based modes (collider_agent, biology_agent, stat_agent): no Python
+    # refinement loop — the agent handled the full pipeline atomically in
+    # Stage 12 and wrote a canonical results.json.  "Refining" python
+    # source files that were never executed is wasted work; the only
+    # meaningful refinement option is re-invoking the agent (which the
+    # repair loop in pipeline/runner.py handles separately).  Create
+    # placeholder artifacts and exit so downstream stages see a non-empty
+    # experiment_final/.
+    if config.experiment.mode in ("collider_agent", "biology_agent", "stat_agent"):
+        agent_label = config.experiment.mode
+        agent_pretty = {
+            "collider_agent": "ColliderAgent",
+            "biology_agent": "Biology-Agent",
+            "stat_agent": "stat_research_agent",
+        }.get(agent_label, agent_label)
+        logger.info(
+            "Stage 13: Skipping iterative refinement in %s mode "
+            "(%s pipeline completed in Stage 12)",
+            agent_label, agent_pretty,
+        )
+        import shutil as _shutil
+
+        final_dir = stage_dir / "experiment_final"
+        final_dir.mkdir(exist_ok=True)
+
+        # Copy Stage 12 run artifacts into experiment_final/ for downstream stages
+        runs_artifact = _read_prior_artifact(run_dir, "runs/")
+        if runs_artifact and Path(runs_artifact).is_dir():
+            for _item in Path(runs_artifact).iterdir():
+                _dst = final_dir / _item.name
+                if _item.is_file():
+                    _shutil.copy2(_item, _dst)
+        else:
+            (final_dir / f"{agent_label}_results.md").write_text(
+                f"# {agent_pretty} Results\n\nExperiment executed via {agent_pretty} in Stage 12.\n",
+                encoding="utf-8",
+            )
+
+        log: dict[str, Any] = {
+            "generated": _utcnow_iso(),
+            "mode": agent_label,
+            "skipped": True,
+            "skip_reason": (
+                f"Iterative refinement not applicable in {agent_label} mode — "
+                f"{agent_pretty} ran the full pipeline in Stage 12"
+            ),
+            "metric_key": config.experiment.metric_key,
+        }
+        (stage_dir / "refinement_log.json").write_text(
+            json.dumps(log, indent=2), encoding="utf-8"
+        )
+        return StageResult(
+            stage=Stage.ITERATIVE_REFINE,
+            status=StageStatus.DONE,
+            artifacts=("refinement_log.json", "experiment_final/"),
+            evidence_refs=("stage-13/refinement_log.json",),
+        )
 
     # R10-Fix3: Skip iterative refinement in simulated mode (no real execution)
     if config.experiment.mode == "simulated":

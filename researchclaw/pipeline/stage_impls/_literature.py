@@ -197,33 +197,13 @@ def _execute_search_strategy(
     queries_list: list[str] = []
     year_min = 2020
     if isinstance(plan, dict):
-        strategies = (
-            plan.get("search_strategies")
-            or plan.get("search_phases")
-            or plan.get("phases")
-            or []
-        )
+        strategies = plan.get("search_strategies", [])
         if isinstance(strategies, list):
             for strat in strategies:
                 if isinstance(strat, dict):
                     qs = strat.get("queries", [])
                     if isinstance(qs, list):
-                        for q in qs:
-                            if isinstance(q, str) and q.strip():
-                                queries_list.append(q.strip())
-                            elif isinstance(q, dict):
-                                for v in q.values():
-                                    if isinstance(v, str) and v.strip():
-                                        queries_list.append(v.strip())
-        top_level_queries = plan.get("queries")
-        if isinstance(top_level_queries, list) and not queries_list:
-            for q in top_level_queries:
-                if isinstance(q, str) and q.strip():
-                    queries_list.append(q.strip())
-                elif isinstance(q, dict):
-                    for v in q.values():
-                        if isinstance(v, str) and v.strip():
-                            queries_list.append(v.strip())
+                        queries_list.extend(str(q) for q in qs if q)
         filters = plan.get("filters", {})
         if isinstance(filters, dict) and filters.get("min_year"):
             try:

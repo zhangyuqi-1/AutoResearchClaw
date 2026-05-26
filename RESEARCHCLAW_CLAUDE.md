@@ -1,4 +1,4 @@
-# ResearchClaw
+# AutoResearchClaw
 
 ## What This Is
 
@@ -40,7 +40,7 @@ results = execute_pipeline(
 
 ```
 researchclaw/
-├── __init__.py              # Version (0.3.2)
+├── __init__.py              # Version (0.5.0)
 ├── config.py                # RCConfig dataclass, validation, YAML loading
 ├── adapters.py              # AdapterBundle (recording stubs for notifications, OpenClaw bridge)
 ├── cli.py                   # CLI: `researchclaw run` and `researchclaw validate`

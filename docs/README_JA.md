@@ -11,18 +11,23 @@
 </p>
 
 <p align="center">
+  📄 <b>私たちの論文が arXiv で公開されました — ぜひお読みください！</b> <a href="https://arxiv.org/abs/2605.20025"><i>AutoResearchClaw: Self-Reinforcing Autonomous Research with Human-AI Collaboration</i></a>
+</p>
+
+<p align="center">
   <img src="../image/framework_v2.png" width="100%" alt="AutoResearchClaw Framework">
 </p>
 
 
 <p align="center">
+  <a href="https://arxiv.org/abs/2605.20025"><img src="https://img.shields.io/badge/arXiv-2605.20025-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <a href="https://huggingface.co/datasets/AIMING-Lab-UNC/ARC-Bench"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-ARC--Bench-yellow" alt="ARC-Bench on Hugging Face"></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License"></a>
   <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="#テスト"><img src="https://img.shields.io/badge/Tests-2699%20passed-brightgreen?logo=pytest&logoColor=white" alt="2699 Tests Passed"></a>
   <a href="https://github.com/aiming-lab/AutoResearchClaw"><img src="https://img.shields.io/badge/GitHub-AutoResearchClaw-181717?logo=github" alt="GitHub"></a>
   <a href="#openclaw-統合"><img src="https://img.shields.io/badge/OpenClaw-Compatible-ff4444?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg==" alt="OpenClaw Compatible"></a>
   <a href="https://discord.gg/u4ksqW5P"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="#%EF%B8%8F-ethics-and-responsible-use"><img src="https://img.shields.io/badge/⚠️_Ethics-Read_Before_Use-orange" alt="Ethics Guidelines"></a>
 </p>
 
 <p align="center">
@@ -64,9 +69,9 @@
 ---
 
 ## 🔥 News
-- **[04/08/2026]** **倫理と責任ある利用ガイドライン！** — 学術的誠実性、透明性、引用検証、悪用防止、デュアルユースに関する包括的な倫理ガイドラインを追加しました。AI生成論文は下書きであり、完成品ではありません。人間によるレビューが不可欠です。
+- **[05/19/2026]** **v0.5.0** — **マルチドメイン実験エージェント + ARC-Bench** — 2 つの主要アップデート。**(1) ドメイン特化型実行エージェント：** 実験ステージ（ステージ 10〜13）は、デフォルトの ML サンドボックスを超えて分野ごとの専門エージェントにルーティングされます——**高エネルギー物理**（ColliderAgent：FeynRules → MadGraph5 → Delphes、Magnus クラウド経由）、**生物学**（COBRApy ゲノムスケール代謝モデリング）、**統計学**（シミュレーション研究エージェント）。化学・材料は汎用 Docker エグゼキューターが担当します。パイプラインは研究領域から適切なエグゼキューターを自動選択します。**(2) ARC-Bench：** **55 トピック**のオープンエンド自律研究ベンチマーク。**ML（25）、高エネルギー物理（10）、量子（10）、生物（7）、統計（3）** を対象とし、各トピックにマニフェストと採点ルーブリックが付属します（`experiments/arc_bench/`、さらに [🤗 Hugging Face](https://huggingface.co/datasets/AIMING-Lab-UNC/ARC-Bench) でも公開）。**[→ ドメイン統合ガイド](DOMAIN_INTEGRATION_GUIDE.md)**
 - **[04/01/2026]** **v0.4.0** — **Human-in-the-Loop コパイロットシステム** — AutoResearchClawは完全自律だけではなくなりました。新しいHITLシステムにより、6つの介入モード（`full-auto`、`gate-only`、`checkpoint`、`step-by-step`、`co-pilot`、`custom`）、ステージごとのポリシー、人間とAIの深い協調が追加されます。仮説の共同作成のためのアイデアワークショップ、実験設計レビューのためのベースラインナビゲーター、協調的ドラフト作成のための論文コライター、SmartPause（信頼度駆動の動的介入）、ALHF介入学習、反幻覚クレーム検証、コスト予算ガードレール、並列仮説探索のためのパイプラインブランチ、CLIコマンド（`attach`/`status`/`approve`/`reject`/`guide`）を含みます。**[→ 完全HITLガイド](HITL_GUIDE.md)**
-- **[03/30/2026]** **フレキシブルスキルローディング** — AutoResearchClawは、研究体験をさらに向上させるために、オープンソースおよびカスタムスキルのロードに対応しました。科学的ライティング、実験設計、化学、生物学などをカバーする19のプリロードスキルがすぐに使えるリファレンスとして含まれており、コミュニティ提供の[A-Evolve](https://github.com/A-EVO-Lab/a-evolve)エージェント進化スキルも含まれています。`researchclaw skills install`でインストールするか、`.claude/skills/`に`SKILL.md`を配置してください。[スキルライブラリ](#-スキルライブラリ)を参照。
+- **[03/30/2026]** **フレキシブルスキルローディング** — AutoResearchClawは、研究体験をさらに向上させるために、オープンソースおよびカスタムスキルのロードに対応しました。科学的ライティング、実験設計、化学、生物学などをカバーする20のプリロードスキルがすぐに使えるリファレンスとして含まれており、コミュニティ提供の[A-Evolve](https://github.com/A-EVO-Lab/a-evolve)エージェント進化スキルも含まれています。`researchclaw skills install`でインストールするか、`.claude/skills/`に`SKILL.md`を配置してください。[スキルライブラリ](#-スキルライブラリ)を参照。
 - **[03/22/2026]** [v0.3.2](https://github.com/aiming-lab/AutoResearchClaw/releases/tag/v0.3.2) — **クロスプラットフォーム対応 + 安定性大幅向上** — ACP互換AIエージェントバックエンド（Claude Code、Codex CLI、Copilot CLI、Gemini CLI、Kimi CLI）に対応し、OpenClawブリッジ経由でメッセージングプラットフォーム（Discord、Telegram、Lark、WeChat）もサポート。新しいCLIエージェントコード生成バックエンドにより、ステージ10と13を外部CLIエージェントに委任し、予算制御とタイムアウト管理に対応。反データ捏造システム（VerifiedRegistry + 実験診断・修復ループ）、100件以上のバグ修正、モジュラーexecutorリファクタリング、`--resume`自動検出、LLMリトライ強化、コミュニティ報告の修正を含む。
 
 <details>
@@ -528,7 +533,7 @@ researchclaw run --config config.arc.yaml --topic "Your idea" --auto-approve
 
 ## 🧩 スキルライブラリ
 
-AutoResearchClawは、研究体験をさらに向上させるために**オープンソースおよびカスタムスキル**のロードに対応しました。また、**19のプリロード組み込みスキル**（科学的ライティング、文献検索、化学、生物学など）をすぐに使えるリファレンスとして搭載しており、高い柔軟性を提供します。スキルのフロントマターに`enabled: false`を追加することで無効化できます。
+AutoResearchClawは、研究体験をさらに向上させるために**オープンソースおよびカスタムスキル**のロードに対応しました。また、**20のプリロード組み込みスキル**（科学的ライティング、文献検索、化学、生物学など）をすぐに使えるリファレンスとして搭載しており、高い柔軟性を提供します。スキルのフロントマターに`enabled: false`を追加することで無効化できます。
 
 **組み込みスキルの例：**
 
@@ -538,7 +543,7 @@ AutoResearchClawは、研究体験をさらに向上させるために**オー�
 | **ドメイン** | `chemistry-rdkit` | 分子分析、SMILES、フィンガープリント、創薬 |
 | **実験** | `literature-search` | 体系的レビュー、PRISMAメソドロジー |
 
-> 全19スキルは`researchclaw skills list`で確認できます。
+> 全20スキルは`researchclaw skills list`で確認できます。
 
 ### カスタムスキルのロード
 
@@ -758,24 +763,6 @@ openclaw_bridge:
 
 ---
 
-## ⚠️ 倫理と責任ある利用
-
-AutoResearchClaw は研究支援ツールであり、人間の研究者の代替ではありません。すべてのユーザーに以下の原則を遵守していただくようお願いします：
-
-**学術的誠実性。** AutoResearchClaw が生成した論文は草稿として扱い、投稿前に十分な人間によるレビュー、検証、修正を行う必要があります。論文に記載された著者は、その内容、主張、正確性について全責任を負います。十分な人間の監督や開示なしに AI 生成テキストを使用することは、所属機関や対象学会の学術的誠実性ポリシーに違反する可能性があります。
-
-**透明性と開示。** 対象学会のポリシーに従い、原稿における AutoResearchClaw（またはあらゆる AI 支援）の使用を開示することを強く推奨します（例：NeurIPS、ICML、ICLR などの主要学会は現在 AI ライティング支援の開示を求めています）。人間参加型 Co-Pilot は、研究上の意思決定に対する有意義な人間の制御を維持するために存在します。
-
-**引用と帰属。** AutoResearchClaw は4層パイプラインで引用を検証しますが、完璧な自動化システムはありません。ユーザーは投稿前にすべての引用が実在し、関連性があり、正しく引用されていることを手動で確認する必要があります。偽造または誤帰属の引用は科学的信頼を損ないます。
-
-**悪用リスク。** あらゆる強力なツールと同様に、AutoResearchClaw は低品質または誤解を招く研究の大量生産に悪用される可能性があります。論文工場、不正投稿、または査読を操作するためのコンテンツの生成に本システムを使用することを支持しません。組織的な悪用が発見された場合、ライセンスまたは利用規約を更新する権利を留保します。
-
-**二重用途。** 自律型研究システムは、科学的労働の将来、著者資格の規範、査読プロセスに関するより広い問題を提起します。これらのトピックについてのコミュニティの議論を歓迎し、本技術の責任ある開発に取り組んでいます。
-
-AutoResearchClaw を使用することにより、これらの原則ならびに所属機関および研究コミュニティの倫理ガイドラインに沿った方法で使用することに同意したものとみなされます。
-
----
-
 ## 📄 ライセンス
 
 MIT — 詳細は[LICENSE](../LICENSE)をご覧ください。
@@ -787,12 +774,14 @@ MIT — 詳細は[LICENSE](../LICENSE)をご覧ください。
 AutoResearchClawが役に立った場合は、以下を引用してください：
 
 ```bibtex
-@misc{liu2026autoresearchclaw,
-  author       = {Liu, Jiaqi and Xia, Peng and Han, Siwei and Qiu, Shi and Zhang, Letian and Chen, Guiming and Tu, Haoqin and Yang, Xinyu and Zhou, Jiawei and Zhu, Hongtu and Li, Yun and Zhang, Jiaheng and Zhou, Yuyin and Zheng, Zeyu and Xie, Cihang and Ding, Mingyu and Yao, Huaxiu},
-  title        = {AutoResearchClaw: Fully Autonomous Research from Idea to Paper},
-  year         = {2026},
-  organization = {GitHub},
-  url          = {https://github.com/aiming-lab/AutoResearchClaw},
+@misc{liu2026autoresearchclawselfreinforcingautonomousresearch,
+      title={AutoResearchClaw: Self-Reinforcing Autonomous Research with Human-AI Collaboration},
+      author={Jiaqi Liu and Shi Qiu and Mairui Li and Bingzhou Li and Haonian Ji and Siwei Han and Xinyu Ye and Peng Xia and Zihan Dong and Congyu Zhang and Letian Zhang and Guiming Chen and Haoqin Tu and Xinyu Yang and Lu Feng and Xujiang Zhao and Haifeng Chen and Jiawei Zhou and Xiao Wang and Weitong Zhang and Hongtu Zhu and Yun Li and Jieru Mei and Hongliang Fei and Jiaheng Zhang and Linjie Li and Linjun Zhang and Yuyin Zhou and Sheng Wang and Caiming Xiong and James Zou and Zeyu Zheng and Cihang Xie and Mingyu Ding and Huaxiu Yao},
+      year={2026},
+      eprint={2605.20025},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2605.20025},
 }
 ```
 

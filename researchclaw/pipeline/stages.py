@@ -119,6 +119,7 @@ GATE_STAGES: frozenset[Stage] = frozenset(
 GATE_ROLLBACK: dict[Stage, Stage] = {
     Stage.LITERATURE_SCREEN: Stage.LITERATURE_COLLECT,  # reject → re-collect
     Stage.EXPERIMENT_DESIGN: Stage.HYPOTHESIS_GEN,  # reject → re-hypothesize
+    Stage.CODE_GENERATION: Stage.EXPERIMENT_DESIGN,  # hep_ph profile only; see gate_required
     Stage.QUALITY_GATE: Stage.PAPER_OUTLINE,  # reject → rewrite paper
 }
 
@@ -215,10 +216,29 @@ class TransitionOutcome:
 def gate_required(
     stage: Stage,
     hitl_required_stages: Iterable[int] | None = None,
+    *,
+    profile: str | None = None,
 ) -> bool:
-    """Check whether a stage requires human-in-the-loop approval."""
-    if stage not in GATE_STAGES:
+    """Check whether a stage requires human-in-the-loop approval.
+
+    The CODE_GENERATION stage becomes a gate when ``profile == "hep_ph"``
+    so reviewers can inspect/edit ``collider_plan.md`` before ColliderAgent
+    runs the expensive physics pipeline. Other profiles see no change.
+
+    The hep_ph CODE_GENERATION gate is treated as mandatory regardless of
+    ``hitl_required_stages`` filtering — it's a profile-level invariant,
+    not an opt-in policy.
+    """
+    is_gate = stage in GATE_STAGES
+    is_hep_ph_codegen_gate = (
+        stage is Stage.CODE_GENERATION and profile == "hep_ph"
+    )
+    if not is_gate and is_hep_ph_codegen_gate:
+        is_gate = True
+    if not is_gate:
         return False
+    if is_hep_ph_codegen_gate:
+        return True
     if hitl_required_stages is not None:
         return int(stage) in frozenset(hitl_required_stages)
     return True  # Default: all gate stages require approval

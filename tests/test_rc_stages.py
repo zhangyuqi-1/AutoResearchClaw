@@ -59,6 +59,7 @@ def test_gate_rollback_map_matches_expected_targets():
     assert GATE_ROLLBACK == {
         Stage.LITERATURE_SCREEN: Stage.LITERATURE_COLLECT,
         Stage.EXPERIMENT_DESIGN: Stage.HYPOTHESIS_GEN,
+        Stage.CODE_GENERATION: Stage.EXPERIMENT_DESIGN,
         Stage.QUALITY_GATE: Stage.PAPER_OUTLINE,
     }
 

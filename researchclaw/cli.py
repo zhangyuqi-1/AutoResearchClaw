@@ -163,6 +163,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     from_stage_name = cast(str | None, args.from_stage)
     to_stage_name = cast(str | None, getattr(args, "to_stage", None))
     auto_approve = cast(bool, args.auto_approve)
+    incremental_experiment = cast(bool, getattr(args, "incremental_experiment", False))
     skip_preflight = cast(bool, args.skip_preflight)
     resume = cast(bool, args.resume)
     skip_noncritical = cast(bool, args.skip_noncritical_stage)
@@ -170,7 +171,34 @@ def cmd_run(args: argparse.Namespace) -> int:
     hitl_mode = cast(str | None, getattr(args, "mode", None))
 
     kb_root_path = None
-    config = RCConfig.load(config_path, check_paths=False)
+    profile_override = cast(str | None, getattr(args, "profile", None))
+    config = RCConfig.load(
+        config_path, check_paths=False, profile_override=profile_override
+    )
+
+    # If the user deployed a profile, force every detector call to agree
+    # with it — otherwise Stage 10/18/22 may keyword-detect a different
+    # domain from the topic and mix prompt styles.
+    if config.project.profile:
+        try:
+            from researchclaw.domains.detector import set_forced_profile
+            set_forced_profile(config.project.profile)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Override incremental_experiment if CLI flag is set
+    if incremental_experiment:
+        import dataclasses
+
+        config = dataclasses.replace(
+            config,
+            experiment=dataclasses.replace(
+                config.experiment,
+                collider_agent=dataclasses.replace(
+                    config.experiment.collider_agent, incremental=True
+                ),
+            ),
+        )
 
     # Override graceful_degradation if CLI flag is set
     if no_graceful_degradation:
@@ -213,10 +241,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     run_id = _generate_run_id(config.research.topic)
     run_dir = Path(output or f"artifacts/{run_id}")
 
-    # BUG-119 / #216: When --resume or --from-stage is used without --output,
-    # search for the most recent existing run directory that matches the topic.
-    # Without this, --from-stage creates a fresh empty directory and the
-    # StageContract input_files check fails immediately.
+    # BUG-119 / BUG-216: When --resume or --from-stage is used without
+    # --output, search for the most recent existing run directory that
+    # matches the topic.  Without this, --from-stage creates a new empty
+    # directory that has no prior stage artifacts.
     if (resume or from_stage_name) and not output:
         topic_hash = hashlib.sha256(config.research.topic.encode()).hexdigest()[:6]
         artifacts_root = Path("artifacts")
@@ -253,6 +281,19 @@ def cmd_run(args: argparse.Namespace) -> int:
                 )
 
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Config snapshot — copy the active YAML into the run directory so each
+    # task's run_dir is self-describing (profile, topic, experiment mode,
+    # LLM provider). On resume, snapshot under a timestamped name to avoid
+    # overwriting the original.
+    try:
+        snapshot_path = run_dir / "config.yaml"
+        if snapshot_path.exists():
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            snapshot_path = run_dir / f"config.resumed-{ts}.yaml"
+        shutil.copy2(config_path, snapshot_path)
+    except Exception as _snap_exc:  # noqa: BLE001
+        print(f"Warning: config snapshot failed: {_snap_exc}", file=sys.stderr)
 
     if config.knowledge_base.root:
         kb_root_path = Path(config.knowledge_base.root)
@@ -366,6 +407,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"  Mode:    {config.project.mode}")
     if hitl_config and hitl_config.enabled:
         print(f"  HITL:    {hitl_config.mode}")
+    if config.project.profile:
+        print(f"  Profile: {config.project.profile}")
     print(f"  From:    Stage {int(from_stage)}: {from_stage.name}")
     if to_stage:
         print(f"  To:      Stage {int(to_stage)}: {to_stage.name}")
@@ -464,6 +507,89 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if output:
         write_doctor_report(report, Path(output))
     return 0 if report.overall == "pass" else 1
+
+
+def cmd_info(args: argparse.Namespace) -> int:
+    """Summarise resolved config: profile, prompt bank, stages, extras."""
+    from researchclaw.pipeline._domain import _prompt_bank_domain_from_config
+    from researchclaw.prompts import PromptManager
+
+    resolved = _resolve_config_or_exit(args)
+    if resolved is None:
+        return 1
+    config_path = resolved
+    profile_override = cast(str | None, getattr(args, "profile", None))
+    try:
+        config = RCConfig.load(
+            config_path,
+            check_paths=False,
+            profile_override=profile_override,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error loading config: {exc}", file=sys.stderr)
+        return 1
+
+    bank = _prompt_bank_domain_from_config(config)
+    profile_id = str(getattr(config.project, "profile", "") or "").strip() or "(none)"
+    topic = str(getattr(config.research, "topic", "") or "").strip() or "(unset)"
+    domains_raw = getattr(config.research, "domains", ()) or ()
+    domains = ", ".join(str(d) for d in domains_raw) or "(none)"
+
+    extras_cfg = getattr(config.prompts, "extra_prompts", ()) or ()
+    extras_pairs: dict[str, str] = {}
+    for item in extras_cfg:
+        try:
+            stage_key, value = item
+        except (TypeError, ValueError):
+            continue
+        extras_pairs[str(stage_key)] = str(value)
+
+    pm = PromptManager(
+        config.prompts.custom_file or None,
+        domain=bank,
+        extra_prompts=extras_pairs or None,
+    )
+    resolved_extras = pm.extra_prompts()
+    hyp_roles = sorted(pm.debate_roles_hypothesis().keys())
+    ana_roles = sorted(pm.debate_roles_analysis().keys())
+
+    bank_label = {"ml": "ML (machine learning)", "hep_ph": "HEP-ph (particle phenomenology)"}.get(bank, bank)
+
+    print("=" * 68)
+    print("ResearchClaw configuration summary")
+    print("=" * 68)
+    print(f"  Config file      : {config_path}")
+    print(f"  Project profile  : {profile_id}")
+    print(f"  Research topic   : {topic}")
+    print(f"  Declared domains : {domains}")
+    print(f"  Resolved bank    : {bank}  [{bank_label}]")
+    if config.prompts.custom_file:
+        print(f"  Prompt overrides : {config.prompts.custom_file}")
+    print()
+    print("  Debate roles (hypothesis): " + ", ".join(hyp_roles))
+    print("  Debate roles (analysis)  : " + ", ".join(ana_roles))
+    print()
+    print("Pipeline stages  (mark [EXTRA] = prompts.extra_prompts configured)")
+    print("-" * 68)
+    for stage in pm.stage_names():
+        marker = " [EXTRA]" if stage in resolved_extras else ""
+        print(f"  - {stage}{marker}")
+    if resolved_extras:
+        print()
+        print("Configured extra prompts")
+        print("-" * 68)
+        for stage, text in resolved_extras.items():
+            preview = text.replace("\n", " ")
+            if len(preview) > 72:
+                preview = preview[:72] + "..."
+            print(f"  {stage}: {preview}")
+    else:
+        print()
+        print("  (no prompts.extra_prompts configured — any stage above can")
+        print("   receive custom guidance via config.yaml -> prompts.extra_prompts)")
+    print("=" * 68)
+    return 0
+
 
 def cmd_project(args: argparse.Namespace) -> int:
     """C1: Multi-project management commands."""
@@ -648,11 +774,7 @@ _PROVIDER_CHOICES = {
     "2": ("openrouter", "OPENROUTER_API_KEY"),
     "3": ("deepseek", "DEEPSEEK_API_KEY"),
     "4": ("minimax", "MINIMAX_API_KEY"),
-    "5": ("volcengine", "VOLCENGINE_API_KEY"),
-    "6": ("volcengine-coding-plan", "VOLCENGINE_API_KEY"),
-    "7": ("byteplus", "BYTEPLUS_API_KEY"),
-    "8": ("byteplus-coding-plan", "BYTEPLUS_API_KEY"),
-    "9": ("acp", ""),
+    "5": ("acp", ""),
 }
 
 _PROVIDER_URLS = {
@@ -660,10 +782,6 @@ _PROVIDER_URLS = {
     "openrouter": "https://openrouter.ai/api/v1",
     "deepseek": "https://api.deepseek.com/v1",
     "minimax": "https://api.minimaxi.com/v1",
-    "volcengine": "https://ark.cn-beijing.volces.com/api/v3",
-    "volcengine-coding-plan": "https://ark.cn-beijing.volces.com/api/coding/v3",
-    "byteplus": "https://ark.ap-southeast.bytepluses.com/api/v3",
-    "byteplus-coding-plan": "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
 }
 
 _PROVIDER_MODELS = {
@@ -674,48 +792,6 @@ _PROVIDER_MODELS = {
     ),
     "deepseek": ("deepseek-chat", ["deepseek-reasoner"]),
     "minimax": ("MiniMax-M2.5", ["MiniMax-M2.5-highspeed"]),
-    "volcengine": (
-        "doubao-seed-2-0-pro-260215",
-        [
-            "doubao-seed-2-0-lite-260215",
-            "doubao-seed-2-0-mini-260215",
-            "doubao-seed-2-0-code-preview-260215",
-            "kimi-k2-5-260127",
-            "glm-4-7-251222",
-            "deepseek-v3-2-251201",
-        ],
-    ),
-    "volcengine-coding-plan": (
-        "doubao-seed-2.0-code",
-        [
-            "doubao-seed-2.0-pro",
-            "doubao-seed-2.0-lite",
-            "doubao-seed-code",
-            "minimax-m2.5",
-            "glm-4.7",
-            "deepseek-v3.2",
-            "kimi-k2.5",
-        ],
-    ),
-    "byteplus": (
-        "seed-2-0-pro-260328",
-        [
-            "seed-2-0-lite-260228",
-            "seed-2-0-mini-260215",
-            "kimi-k2-5-260127",
-            "glm-4-7-251222",
-        ],
-    ),
-    "byteplus-coding-plan": (
-        "dola-seed-2.0-pro",
-        [
-            "dola-seed-2.0-lite",
-            "bytedance-seed-code",
-            "glm-4.7",
-            "kimi-k2.5",
-            "gpt-oss-120b",
-        ],
-    ),
 }
 
 
@@ -751,17 +827,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("  2) openrouter   (requires OPENROUTER_API_KEY)")
         print("  3) deepseek     (requires DEEPSEEK_API_KEY)")
         print("  4) minimax      (requires MINIMAX_API_KEY)")
-        print("  5) volcengine   (requires VOLCENGINE_API_KEY)")
-        print(
-            "  6) volcengine-coding-plan"
-            " (requires VOLCENGINE_API_KEY)"
-        )
-        print("  7) byteplus     (requires BYTEPLUS_API_KEY)")
-        print(
-            "  8) byteplus-coding-plan"
-            " (requires BYTEPLUS_API_KEY)"
-        )
-        print("  9) acp          (local AI agent — no API key needed)")
+        print("  5) acp          (local AI agent — no API key needed)")
         try:
             raw = input("Choice [1]: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -1071,7 +1137,8 @@ def cmd_skills(args: argparse.Namespace) -> int:
     return 1
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Construct and return the top-level argument parser (without parsing)."""
     parser = argparse.ArgumentParser(
         prog="researchclaw",
         description="ResearchClaw — Autonomous Research Pipeline",
@@ -1093,6 +1160,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     _ = run_p.add_argument(
         "--auto-approve", action="store_true", help="Auto-approve gate stages"
+    )
+    _ = run_p.add_argument(
+        "--incremental-experiment",
+        action="store_true",
+        help=(
+            "Enable non-destructive Stage 12 re-entry for hep-ph collider runs: "
+            "snapshot the existing collider_workspace, treat the new "
+            "collider_plan.md as a delta, and merge new results.json into "
+            "the prior one. Use with --from-stage CODE_GENERATION or "
+            "--from-stage EXPERIMENT_RUN."
+        ),
     )
     _ = run_p.add_argument(
         "--mode", "-m",
@@ -1120,6 +1198,16 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Path to scripted HITL interventions JSON file",
     )
+    _ = run_p.add_argument(
+        "--profile", "-p",
+        default=None,
+        help=(
+            "Domain profile id to deploy (e.g. hep_ph, ml_vision). The profile "
+            "supplies config-level defaults (experiment.mode, export.target_conference, "
+            "pip_packages, ...) and forces the domain adapter. Run `researchclaw "
+            "profile list` to see available profiles. Overrides project.profile."
+        ),
+    )
     val_p = sub.add_parser("validate", help="Validate config file")
     _ = val_p.add_argument(
         "--config", "-c", default=None,
@@ -1142,6 +1230,26 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     _ = sub.add_parser("setup", help="Check and install optional tools (OpenCode, etc.)")
+
+    # Introspection: show resolved domain / prompt bank / stage extras
+    info_p = sub.add_parser(
+        "info",
+        help="Show resolved config: profile, prompt bank, stage list, extras",
+        description=(
+            "Summarise the current run configuration — project profile, research "
+            "topic, resolved prompt bank (ml or hep_ph), debate role roster, and "
+            "the full pipeline stage list with [EXTRA] markers for any stages "
+            "that have custom guidance configured via prompts.extra_prompts."
+        ),
+    )
+    _ = info_p.add_argument(
+        "--config", "-c", default=None,
+        help="Config file (default: auto-detect config.arc.yaml or config.yaml)",
+    )
+    _ = info_p.add_argument(
+        "--profile", "-p", default=None,
+        help="Override project.profile for this invocation",
+    )
 
     rpt_p = sub.add_parser("report", help="Generate human-readable run report")
     _ = rpt_p.add_argument(
@@ -1204,6 +1312,108 @@ def main(argv: list[str] | None = None) -> int:
     _ = trends_p.add_argument("--config", "-c", default="config.yaml", help="Config file path")
     _ = trends_p.add_argument("--domains", nargs="+", help="Override domains")
 
+    # Domain profiles (deployable — bundle prompts + infra defaults per domain)
+    prof_p = sub.add_parser(
+        "profile",
+        help="List, inspect, create, validate, edit, or delete domain profiles",
+        description=(
+            "Manage domain profiles (hep_ph, ml_vision, ...). Profiles bundle "
+            "prompt specialisations and deployment defaults (experiment mode, "
+            "target conference, Docker image, pip packages). `create` launches "
+            "an interactive wizard with autocomplete suggestions."
+        ),
+    )
+    _ = prof_p.add_argument(
+        "profile_action",
+        nargs="?",
+        default="list",
+        choices=[
+            "list", "show", "path", "dirs", "schema",
+            "create", "validate", "edit", "delete",
+        ],
+        help=(
+            "Action — list: show all profiles; show: print a profile's YAML; "
+            "path: print a profile's file path; dirs: list search directories; "
+            "schema: dump autocomplete vocabularies (JSON); create: interactive "
+            "wizard; validate: check a profile for errors; edit: open profile "
+            "in $EDITOR; delete: remove a user-created profile (default: list)"
+        ),
+    )
+    _ = prof_p.add_argument(
+        "profile_id",
+        nargs="?",
+        default=None,
+        help="Profile id (required for show/path/validate/edit/delete; "
+             "optional for create — wizard will ask)",
+    )
+    # `create` wizard + non-interactive path
+    _ = prof_p.add_argument(
+        "--from-yaml",
+        default=None,
+        metavar="FILE",
+        help="create: read profile spec from YAML/JSON file (non-interactive)",
+    )
+    _ = prof_p.add_argument(
+        "--target-dir",
+        default=None,
+        metavar="DIR",
+        help="create: write the new profile into this directory "
+             "(default: ~/.researchclaw/profiles/)",
+    )
+    _ = prof_p.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="create/delete: overwrite existing or skip confirmation",
+    )
+    _ = prof_p.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="delete: skip the confirmation prompt",
+    )
+    _ = prof_p.add_argument(
+        "--json",
+        action="store_true",
+        help="schema/list: emit machine-readable JSON",
+    )
+    _ = prof_p.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="create: fail instead of prompting (requires --from-yaml or flags)",
+    )
+    # Direct spec flags for scripted `create` (alternative to --from-yaml)
+    _ = prof_p.add_argument("--display-name", default=None)
+    _ = prof_p.add_argument("--parent", default=None,
+                             help="Parent domain (ml, hep_ph, physics, ...)")
+    _ = prof_p.add_argument("--mode", default=None,
+                             help="preferred_experiment_mode")
+    _ = prof_p.add_argument("--project-mode", default=None,
+                             help="preferred_project_mode (docs-first | semi-auto | full-auto)")
+    _ = prof_p.add_argument("--venue", default=None,
+                             help="preferred_target_conference (e.g. jhep, neurips_2025)")
+    _ = prof_p.add_argument("--metric-key", default=None)
+    _ = prof_p.add_argument("--metric-direction", default=None,
+                             choices=[None, "maximize", "minimize"])
+    _ = prof_p.add_argument("--docker-image", default=None)
+    _ = prof_p.add_argument("--gpu", action="store_true", default=None,
+                             help="Mark gpu_required: true")
+    _ = prof_p.add_argument("--time-budget", type=int, default=None,
+                             dest="time_budget", metavar="SECS")
+    _ = prof_p.add_argument("--max-iter", type=int, default=None,
+                             dest="max_iter")
+    _ = prof_p.add_argument("--paradigm", default=None,
+                             help="experiment_paradigm (comparison, simulation, ...)")
+    _ = prof_p.add_argument("--entry-point", default=None,
+                             dest="entry_point")
+    _ = prof_p.add_argument("--pip", action="append", default=None,
+                             metavar="PKG",
+                             help="Add a pip package (repeatable)")
+    _ = prof_p.add_argument("--library", action="append", default=None,
+                             metavar="LIB", dest="libraries",
+                             help="Add a core library (repeatable)")
+    _ = prof_p.add_argument("--keyword", action="append", default=None,
+                             metavar="KW", dest="keywords",
+                             help="Add a paper keyword (repeatable)")
+
     # Skills management
     sk_p = sub.add_parser("skills", help="List, install, or validate skills")
     _ = sk_p.add_argument("skills_action", nargs="?", default="list",
@@ -1242,6 +1452,11 @@ def main(argv: list[str] | None = None) -> int:
     _ = guide_p.add_argument("--stage", "-s", type=int, required=True, help="Target stage number")
     _ = guide_p.add_argument("--message", "-m", required=True, help="Guidance text")
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     command = cast(str | None, args.command)
@@ -1256,6 +1471,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_init(args)
     elif command == "setup":
         return cmd_setup(args)
+    elif command == "info":
+        return cmd_info(args)
     elif command == "report":
         return cmd_report(args)
     elif command == "serve":
@@ -1276,6 +1493,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_calendar(args)
     elif command == "skills":
         return cmd_skills(args)
+    elif command == "profile":
+        return cmd_profile(args)
     elif command == "attach":
         return cmd_attach(args)
     elif command == "status":
@@ -1289,6 +1508,621 @@ def main(argv: list[str] | None = None) -> int:
     else:
         parser.print_help()
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Profile subcommand
+# ---------------------------------------------------------------------------
+
+
+# ---- Wizard helpers (TTY prompts + autocomplete pick-lists) ---------------
+
+def _is_tty() -> bool:
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _prompt_str(label: str, *, default: str = "", example: str = "") -> str:
+    hint_parts: list[str] = []
+    if default:
+        hint_parts.append(f"default: {default}")
+    if example:
+        hint_parts.append(f"e.g. {example}")
+    hint = f" [{' | '.join(hint_parts)}]" if hint_parts else ""
+    try:
+        raw = input(f"{label}{hint}: ").strip()
+    except EOFError:
+        raw = ""
+    return raw or default
+
+
+def _prompt_int(label: str, *, default: int = 0, example: str = "") -> int:
+    while True:
+        raw = _prompt_str(label, default=str(default) if default else "", example=example)
+        if not raw:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            print(f"  ! '{raw}' is not an integer. Try again.")
+
+
+def _prompt_bool(label: str, *, default: bool = False) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    raw = _prompt_str(f"{label} {suffix}").lower()
+    if not raw:
+        return default
+    return raw in ("y", "yes", "true", "1")
+
+
+def _prompt_choice(
+    label: str,
+    choices: list[str],
+    *,
+    default: str = "",
+    allow_custom: bool = False,
+) -> str:
+    """Numbered pick-list. Accepts 1-based number, the value itself, or blank for default."""
+    print(f"{label}:")
+    for idx, val in enumerate(choices, start=1):
+        marker = "*" if val == default else " "
+        print(f"  {marker} {idx:>2}. {val}")
+    tail = "  (press Enter for default"
+    if default:
+        tail += f" '{default}'"
+    tail += "; type a value not on the list" if allow_custom else ""
+    tail += ")"
+    print(tail)
+    while True:
+        raw = _prompt_str("  >").strip()
+        if not raw:
+            return default
+        if raw.isdigit():
+            i = int(raw)
+            if 1 <= i <= len(choices):
+                return choices[i - 1]
+            print(f"  ! pick 1..{len(choices)}")
+            continue
+        if raw in choices:
+            return raw
+        if allow_custom:
+            return raw
+        print(f"  ! '{raw}' is not one of the listed options. Try again.")
+
+
+def _prompt_multi_select(
+    label: str,
+    choices: list[str],
+    *,
+    default_selected: list[str] | None = None,
+    allow_custom: bool = True,
+) -> list[str]:
+    """Numbered multi-select. Type '1,2,5' to pick, '+torch,numpy' to add custom."""
+    default_selected = list(default_selected or [])
+    print(f"{label}:")
+    for idx, val in enumerate(choices, start=1):
+        marker = "*" if val in default_selected else " "
+        print(f"  {marker} {idx:>2}. {val}")
+    print(
+        "  (comma-separated numbers or names; prefix with '+' to add custom; "
+        "Enter = keep the marked defaults; '-' = clear all)"
+    )
+    raw = _prompt_str("  >").strip()
+    if not raw:
+        return default_selected
+    if raw == "-":
+        return []
+    selected: list[str] = list(default_selected)
+    for tok in (t.strip() for t in raw.split(",") if t.strip()):
+        if tok.startswith("+") and allow_custom:
+            custom = tok[1:].strip()
+            if custom and custom not in selected:
+                selected.append(custom)
+            continue
+        if tok.isdigit():
+            i = int(tok)
+            if 1 <= i <= len(choices):
+                val = choices[i - 1]
+                if val not in selected:
+                    selected.append(val)
+            continue
+        if tok in choices:
+            if tok not in selected:
+                selected.append(tok)
+        elif allow_custom:
+            if tok not in selected:
+                selected.append(tok)
+    return selected
+
+
+_PARENT_DEFAULT_HINTS: dict[str, dict[str, Any]] = {
+    "ml": {
+        "mode": "docker", "venue": "neurips_2025",
+        "metric_key": "accuracy", "metric_dir": "maximize",
+        "docker_image": "researchclaw/sandbox-ml:latest",
+        "gpu": True, "time_budget": 1800, "max_iter": 5,
+    },
+    "hep_ph": {
+        "mode": "collider_agent", "venue": "jhep",
+        "metric_key": "exclusion_95cl", "metric_dir": "maximize",
+        "docker_image": "", "gpu": False,
+        "time_budget": 7200, "max_iter": 5,
+    },
+    "physics": {
+        "mode": "docker", "venue": "prd",
+        "metric_key": "primary_metric", "metric_dir": "maximize",
+        "docker_image": "researchclaw/sandbox-generic:latest",
+        "gpu": False, "time_budget": 3600, "max_iter": 5,
+    },
+}
+
+
+def _wizard_build_spec(initial_id: str = "") -> dict[str, Any]:
+    """Interactive profile wizard. Returns a spec dict ready for create_profile."""
+    from researchclaw.domains.deploy import (
+        keyword_suggestions,
+        library_suggestions,
+        schema_vocabularies,
+        validate_profile_id,
+    )
+
+    vocab = schema_vocabularies()
+    print("\n=== Create domain profile (interactive) ===")
+    print("Press Ctrl+C at any time to abort. Every field has a default or can be left blank.\n")
+
+    # Profile id
+    pid = initial_id.strip()
+    while True:
+        pid = _prompt_str("Profile id (lowercase, digits, underscore)",
+                          default=pid, example="my_domain, hep_dark_matter")
+        err = validate_profile_id(pid)
+        if err is None:
+            break
+        print(f"  ! {err}")
+        pid = ""
+
+    display = _prompt_str(
+        "Display name", default=pid.replace("_", " ").title(),
+        example="Dark Matter Phenomenology",
+    )
+
+    parent = _prompt_choice(
+        "Parent domain",
+        vocab["parent_domains"],
+        default="ml",
+        allow_custom=True,
+    )
+    hints = _PARENT_DEFAULT_HINTS.get(parent, _PARENT_DEFAULT_HINTS["ml"])
+
+    mode = _prompt_choice(
+        "Preferred experiment mode (fills experiment.mode)",
+        vocab["experiment_modes"],
+        default=hints["mode"],
+    )
+    pmode = _prompt_choice(
+        "Preferred project mode (fills project.mode)",
+        vocab["project_modes"],
+        default="full-auto",
+    )
+    venue = _prompt_choice(
+        "Preferred target conference (fills export.target_conference)",
+        vocab["target_conferences"],
+        default=hints["venue"],
+    )
+
+    tbudget = _prompt_int(
+        "Default time budget in seconds (0 = leave unset)",
+        default=int(hints["time_budget"]),
+        example="1800 for quick ML, 7200 for HEP runs",
+    )
+    max_iter = _prompt_int(
+        "Default max pipeline iterations (0 = leave unset)",
+        default=int(hints["max_iter"]),
+        example="3, 5, 10",
+    )
+    metric_key = _prompt_str(
+        "Default metric key", default=hints["metric_key"],
+        example="accuracy, f1, exclusion_95cl, chi2",
+    )
+    metric_dir = _prompt_choice(
+        "Metric direction",
+        vocab["metric_directions"],
+        default=hints["metric_dir"],
+    )
+
+    docker_image = _prompt_choice(
+        "Docker image (blank = no default)",
+        vocab["docker_images"] + [""],
+        default=hints["docker_image"],
+        allow_custom=True,
+    )
+    gpu_required = _prompt_bool("Require GPU?", default=bool(hints["gpu"]))
+
+    paradigm = _prompt_choice(
+        "Experiment paradigm",
+        vocab["paradigms"],
+        default="comparison",
+    )
+
+    pip_packages = _prompt_multi_select(
+        "Pip packages pre-installed in sandbox",
+        library_suggestions(parent),
+        default_selected=library_suggestions(parent)[:5],
+    )
+    core_libs = _prompt_multi_select(
+        "Core libraries (documented in the profile for prompts)",
+        library_suggestions(parent),
+        default_selected=pip_packages[:4],
+    )
+    keywords = _prompt_multi_select(
+        "Paper keywords (help the detector + LLM)",
+        keyword_suggestions(parent),
+        default_selected=keyword_suggestions(parent)[:3],
+    )
+
+    entry_point = _prompt_str("Entry point filename", default="main.py",
+                              example="main.py, run.py, experiment.py")
+
+    spec: dict[str, Any] = {
+        "domain_id": pid,
+        "display_name": display,
+        "parent_domain": parent,
+        "preferred_experiment_mode": mode,
+        "preferred_project_mode": pmode,
+        "preferred_target_conference": venue,
+        "default_time_budget_sec": tbudget,
+        "default_max_iterations": max_iter,
+        "default_metric_key": metric_key,
+        "default_metric_direction": metric_dir,
+        "docker_image": docker_image,
+        "gpu_required": gpu_required,
+        "pip_packages": pip_packages,
+        "core_libraries": core_libs,
+        "paper_keywords": keywords,
+        "experiment_paradigm": paradigm,
+        "entry_point": entry_point,
+    }
+    return spec
+
+
+def _spec_from_flags(args: argparse.Namespace) -> dict[str, Any]:
+    """Build a partial spec dict from CLI flags (scripted / non-interactive)."""
+    spec: dict[str, Any] = {}
+    pid = cast(str | None, args.profile_id)
+    if pid:
+        spec["domain_id"] = pid
+    mapping = {
+        "display_name": args.display_name,
+        "parent_domain": args.parent,
+        "preferred_experiment_mode": args.mode,
+        "preferred_project_mode": args.project_mode,
+        "preferred_target_conference": args.venue,
+        "default_metric_key": args.metric_key,
+        "default_metric_direction": args.metric_direction,
+        "docker_image": args.docker_image,
+        "default_time_budget_sec": args.time_budget,
+        "default_max_iterations": args.max_iter,
+        "experiment_paradigm": args.paradigm,
+        "entry_point": args.entry_point,
+    }
+    for key, val in mapping.items():
+        if val is not None and val != "":
+            spec[key] = val
+    if args.gpu is True:
+        spec["gpu_required"] = True
+    if args.pip:
+        spec["pip_packages"] = list(args.pip)
+    if args.libraries:
+        spec["core_libraries"] = list(args.libraries)
+    if args.keywords:
+        spec["paper_keywords"] = list(args.keywords)
+    return spec
+
+
+# ---- Main dispatcher -------------------------------------------------------
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    """List / show / locate / create / validate / edit / delete domain profiles."""
+    from researchclaw.domains.deploy import (
+        create_profile,
+        default_user_profile_dir,
+        delete_profile,
+        describe_profile,
+        is_package_profile,
+        list_deployable_profiles,
+        profile_search_dirs,
+        resolve_profile_path,
+        schema_vocabularies,
+        validate_profile_data,
+        validate_profile_id,
+        writable_profile_dirs,
+    )
+
+    action = cast(str, args.profile_action or "list")
+    profile_id = cast(str | None, args.profile_id)
+
+    # ---- list ---------------------------------------------------------------
+    if action == "list":
+        entries = list_deployable_profiles()
+        if getattr(args, "json", False):
+            import json as _json
+            print(_json.dumps(entries, indent=2))
+            return 0
+        if not entries:
+            print("No profiles found.")
+            return 0
+        width = max(len(e["profile_id"]) for e in entries)
+        for entry in entries:
+            mode = entry.get("preferred_experiment_mode") or "—"
+            venue = entry.get("preferred_target_conference") or "—"
+            print(
+                f"  {entry['profile_id']:<{width}}  "
+                f"{entry['display_name']:<40}  mode={mode:<16} venue={venue}"
+            )
+        print(f"\nTotal: {len(entries)} profiles")
+        print(
+            "\nDeploy with:\n"
+            "  researchclaw run --profile <id>\n"
+            "or set project.profile in config.yaml\n"
+            "\nCreate a new profile:\n"
+            "  researchclaw profile create                # interactive wizard\n"
+            "  researchclaw profile create my_id --from-yaml spec.yaml\n"
+            "\nAdd a new domain by dropping <id>.yaml into:\n"
+            "  ./profiles/                          (project-local)\n"
+            "  ~/.researchclaw/profiles/            (user-wide)\n"
+            "  researchclaw/domains/profiles/       (package — read-only)"
+        )
+        return 0
+
+    # ---- dirs ---------------------------------------------------------------
+    if action == "dirs":
+        search = profile_search_dirs()
+        writable = [p.resolve() for p in writable_profile_dirs()]
+        print("Profile search directories (first hit wins):")
+        for idx, d in enumerate(search, 1):
+            flag = "writable" if d.resolve() in writable else "read-only"
+            present = "exists" if d.is_dir() else "missing"
+            print(f"  {idx}. {d}   [{flag}, {present}]")
+        print("\nDefault target for `profile create`:")
+        print(f"  {default_user_profile_dir()}")
+        print("\nOverride with RESEARCHCLAW_PROFILES_DIR, or pass --target-dir.")
+        return 0
+
+    # ---- schema -------------------------------------------------------------
+    if action == "schema":
+        vocab = schema_vocabularies()
+        if getattr(args, "json", False):
+            import json as _json
+            print(_json.dumps(vocab, indent=2))
+            return 0
+        print("Accepted values for profile fields:\n")
+        for key, val in vocab.items():
+            if isinstance(val, list):
+                print(f"{key}:")
+                for v in val:
+                    print(f"  - {v}")
+            elif isinstance(val, dict):
+                print(f"{key} (by parent_domain):")
+                for parent, items in val.items():
+                    print(f"  {parent}: {', '.join(items)}")
+            print()
+        return 0
+
+    # ---- create -------------------------------------------------------------
+    if action == "create":
+        spec_source = cast(str | None, args.from_yaml)
+        target_dir = (
+            Path(cast(str, args.target_dir)).expanduser().resolve()
+            if args.target_dir else None
+        )
+
+        if spec_source:
+            spec_path = Path(spec_source).expanduser().resolve()
+            if not spec_path.is_file():
+                print(f"Error: --from-yaml file not found: {spec_path}", file=sys.stderr)
+                return 1
+            try:
+                import yaml as _yaml
+                spec = _yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                print(f"Error: could not parse {spec_path}: {exc}", file=sys.stderr)
+                return 1
+            if not isinstance(spec, dict):
+                print(f"Error: {spec_path} must be a YAML/JSON mapping.", file=sys.stderr)
+                return 1
+            if profile_id and not spec.get("domain_id"):
+                spec["domain_id"] = profile_id
+        else:
+            spec = _spec_from_flags(args)
+            need_wizard = not args.non_interactive
+            have_enough = bool(spec.get("domain_id"))
+            if need_wizard and _is_tty():
+                try:
+                    spec = _wizard_build_spec(initial_id=spec.get("domain_id", ""))
+                except (KeyboardInterrupt, EOFError):
+                    print("\nAborted.")
+                    return 130
+            elif not have_enough:
+                print(
+                    "Error: profile create needs either --from-yaml, a TTY for "
+                    "the interactive wizard, or at least --id/profile_id + "
+                    "--display-name via flags.",
+                    file=sys.stderr,
+                )
+                return 1
+
+        # Validate before writing.
+        errors = validate_profile_data(spec)
+        if errors:
+            print("Profile data failed validation:", file=sys.stderr)
+            for e in errors:
+                print(f"  - {e}", file=sys.stderr)
+            return 1
+
+        # Show summary + confirm if interactive.
+        pid = spec["domain_id"]
+        dest = target_dir or default_user_profile_dir()
+        print("\n=== Profile summary ===")
+        for key in (
+            "domain_id", "display_name", "parent_domain",
+            "preferred_experiment_mode", "preferred_project_mode",
+            "preferred_target_conference",
+            "default_time_budget_sec", "default_max_iterations",
+            "default_metric_key", "default_metric_direction",
+            "docker_image", "gpu_required", "experiment_paradigm",
+            "entry_point",
+        ):
+            val = spec.get(key, "")
+            if val in (None, "", 0, False):
+                continue
+            print(f"  {key}: {val}")
+        for key in ("pip_packages", "core_libraries", "paper_keywords"):
+            vals = spec.get(key) or []
+            if vals:
+                print(f"  {key}: {', '.join(vals)}")
+        print(f"  -> will write to: {dest / (pid + '.yaml')}")
+
+        if _is_tty() and not args.force and not args.non_interactive:
+            if not _prompt_bool("Write profile?", default=True):
+                print("Aborted.")
+                return 0
+
+        try:
+            written = create_profile(spec, target_dir=target_dir, force=args.force)
+        except FileExistsError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            print("Tip: pass --force to overwrite, or pick a different id.",
+                  file=sys.stderr)
+            return 2
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+
+        print(f"\n✓ Created profile '{pid}' at {written}")
+        print("\nNext steps:")
+        print(f"  researchclaw profile show {pid}")
+        print(f"  researchclaw run --profile {pid}")
+        print("  (or set project.profile: " + pid + " in config.yaml)")
+        return 0
+
+    # ---- validate -----------------------------------------------------------
+    if action == "validate":
+        if not profile_id:
+            print("Error: 'profile validate' requires a profile id.", file=sys.stderr)
+            return 1
+        try:
+            from researchclaw.domains.deploy import load_profile_yaml
+            data = load_profile_yaml(profile_id)
+        except FileNotFoundError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        errors = validate_profile_data(data)
+        if errors:
+            print(f"✗ Profile '{profile_id}' has {len(errors)} issue(s):")
+            for e in errors:
+                print(f"  - {e}")
+            return 1
+        print(f"✓ Profile '{profile_id}' is valid.")
+        return 0
+
+    # ---- edit ---------------------------------------------------------------
+    if action == "edit":
+        if not profile_id:
+            print("Error: 'profile edit' requires a profile id.", file=sys.stderr)
+            return 1
+        path = resolve_profile_path(profile_id)
+        if path is None:
+            print(f"Error: profile '{profile_id}' not found.", file=sys.stderr)
+            return 1
+        if is_package_profile(profile_id):
+            print(
+                f"Note: {path} is a bundled profile (read-only). Copy it into "
+                f"{default_user_profile_dir()} first to override.",
+                file=sys.stderr,
+            )
+        editor = os.environ.get("EDITOR", "").strip()
+        if not editor:
+            print(f"$EDITOR not set — open the file manually:\n  {path}")
+            return 0
+        import subprocess
+        rc = subprocess.call([editor, str(path)])
+        return rc
+
+    # ---- delete -------------------------------------------------------------
+    if action == "delete":
+        if not profile_id:
+            print("Error: 'profile delete' requires a profile id.", file=sys.stderr)
+            return 1
+        err = validate_profile_id(profile_id)
+        if err:
+            print(f"Error: {err}", file=sys.stderr)
+            return 1
+        path = resolve_profile_path(profile_id)
+        if path is None:
+            print(f"Error: profile '{profile_id}' not found.", file=sys.stderr)
+            return 1
+        if is_package_profile(profile_id):
+            print(
+                f"Refusing to delete bundled profile at {path}.\n"
+                f"To hide it, drop a shadowing <id>.yaml into "
+                f"{default_user_profile_dir()} or ./profiles/.",
+                file=sys.stderr,
+            )
+            return 1
+        if not args.yes and not args.force and _is_tty():
+            if not _prompt_bool(f"Delete profile '{profile_id}' at {path}?",
+                                default=False):
+                print("Aborted.")
+                return 0
+        try:
+            removed = delete_profile(profile_id)
+        except (PermissionError, ValueError, FileNotFoundError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        print(f"✓ Deleted {removed}")
+        return 0
+
+    # ---- show / path (need profile_id) --------------------------------------
+    if not profile_id:
+        print(
+            f"Error: 'profile {action}' requires a profile id.\n"
+            "Run 'researchclaw profile list' to see available profiles.",
+            file=sys.stderr,
+        )
+        return 1
+
+    path = resolve_profile_path(profile_id)
+    if path is None:
+        print(f"Error: profile '{profile_id}' not found.", file=sys.stderr)
+        return 1
+
+    if action == "path":
+        print(path)
+        return 0
+
+    if action == "show":
+        info = describe_profile(profile_id)
+        print(f"# Profile: {info['display_name']} ({info['profile_id']})")
+        print(f"# Source:  {info['source_path']}")
+        bundle = " [bundled, read-only]" if is_package_profile(profile_id) else ""
+        print(f"# Status:  {'user-created' if not bundle else 'bundled'}{bundle}\n")
+        print("# Deployment summary:")
+        print(f"#   experiment.mode          = {info['preferred_experiment_mode'] or '(unset)'}")
+        print(f"#   project.mode             = {info['preferred_project_mode'] or '(unset)'}")
+        print(f"#   export.target_conference = {info['preferred_target_conference'] or '(unset)'}")
+        print(f"#   docker.image             = {info['docker_image'] or '(unset)'}")
+        print(f"#   docker.gpu_enabled       = {info['gpu_required']}")
+        if info["pip_packages"]:
+            print(f"#   pip_pre_install          = {', '.join(info['pip_packages'])}")
+        print("\n# --- raw YAML ---")
+        print(path.read_text(encoding="utf-8").rstrip())
+        return 0
+
+    print(f"Unknown profile action: {action}", file=sys.stderr)
+    return 1
 
 
 # ---------------------------------------------------------------------------

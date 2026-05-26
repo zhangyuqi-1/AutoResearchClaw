@@ -12,6 +12,7 @@ from researchclaw.domains.adapters.biology import BiologyPromptAdapter
 from researchclaw.domains.adapters.chemistry import ChemistryPromptAdapter
 from researchclaw.domains.adapters.neuroscience import NeurosciencePromptAdapter
 from researchclaw.domains.adapters.robotics import RoboticsPromptAdapter
+from researchclaw.domains.adapters.hep_ph import HEPPhPromptAdapter
 
 __all__ = [
     "MLPromptAdapter",
@@ -22,4 +23,5 @@ __all__ = [
     "ChemistryPromptAdapter",
     "NeurosciencePromptAdapter",
     "RoboticsPromptAdapter",
+    "HEPPhPromptAdapter",
 ]

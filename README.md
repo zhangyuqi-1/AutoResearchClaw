@@ -11,18 +11,23 @@
 </p>
 
 <p align="center">
+  📄 <b>Our paper is on arXiv — come read it!</b> <a href="https://arxiv.org/abs/2605.20025"><i>AutoResearchClaw: Self-Reinforcing Autonomous Research with Human-AI Collaboration</i></a>
+</p>
+
+<p align="center">
   <img src="image/framework_v2.png" width="100%" alt="AutoResearchClaw Framework">
 </p>
 
 
 <p align="center">
+  <a href="https://arxiv.org/abs/2605.20025"><img src="https://img.shields.io/badge/arXiv-2605.20025-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <a href="https://huggingface.co/datasets/AIMING-Lab-UNC/ARC-Bench"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-ARC--Bench-yellow" alt="ARC-Bench on Hugging Face"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License"></a>
   <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="#testing"><img src="https://img.shields.io/badge/Tests-2699%20passed-brightgreen?logo=pytest&logoColor=white" alt="2699 Tests Passed"></a>
   <a href="https://github.com/aiming-lab/AutoResearchClaw"><img src="https://img.shields.io/badge/GitHub-AutoResearchClaw-181717?logo=github" alt="GitHub"></a>
   <a href="#openclaw-integration"><img src="https://img.shields.io/badge/OpenClaw-Compatible-ff4444?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg==" alt="OpenClaw Compatible"></a>
   <a href="https://discord.gg/u4ksqW5P"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="#%EF%B8%8F-ethics-and-responsible-use"><img src="https://img.shields.io/badge/⚠️ Ethics-Read_Before_Use-orange" alt="Ethics Guidelines"></a>
 </p>
 
 <p align="center">
@@ -63,9 +68,9 @@
 ---
 
 ## 🔥 News
-- **[04/08/2026]** **Ethics and Responsible Use Guidelines!** — We've added comprehensive [ethics guidelines](#%EF%B8%8F-ethics-and-responsible-use) covering academic integrity, transparency, citation verification, misuse prevention, and dual-use considerations. AI-generated papers are drafts, not finished work — human review is essential. Please read before using AutoResearchClaw for any submission.
+- **[05/19/2026]** **v0.5.0** — **Multi-Domain Experiment Agents + ARC-Bench** — Two headline updates. **(1) Domain-specialist execution agents:** the experiment stage (Stages 10–13) now routes beyond the default ML sandbox to specialist agents per field — **high-energy physics** (ColliderAgent: Lagrangian → FeynRules → MadGraph5 → Delphes via the Magnus cloud), **biology** (COBRApy genome-scale metabolic modelling), and **statistics** (simulation-study agent), with a generic Docker executor covering chemistry/materials. The pipeline auto-selects the right executor from the research domain. **(2) ARC-Bench:** a **55-topic** open-ended autonomous-research benchmark spanning **ML (25), HEP (10), quantum (10), biology (7), and statistics (3)** — each topic ships a manifest (research question + conditions + metrics + datasets) and a rubric for graded scoring, all under [`experiments/arc_bench/`](experiments/arc_bench/), and also released on [🤗 Hugging Face](https://huggingface.co/datasets/AIMING-Lab-UNC/ARC-Bench). **[→ Domain Integration Guide](docs/DOMAIN_INTEGRATION_GUIDE.md)**
 - **[04/01/2026]** **v0.4.0** — **Human-in-the-Loop Co-Pilot System** — AutoResearchClaw is no longer purely autonomous. New HITL system adds 6 intervention modes (`full-auto`, `gate-only`, `checkpoint`, `step-by-step`, `co-pilot`, `custom`), per-stage policies, and deep human-AI collaboration. Includes: Idea Workshop for hypothesis co-creation, Baseline Navigator for experiment design review, Paper Co-Writer for collaborative drafting, SmartPause (confidence-driven dynamic intervention), ALHF intervention learning, anti-hallucination claim verification, cost budget guardrails, pipeline branching for parallel hypothesis exploration, and CLI commands (`attach`/`status`/`approve`/`reject`/`guide`). **[→ Full HITL Guide](docs/HITL_GUIDE.md)**
-- **[03/30/2026]** **Flexible Skill Loading** — AutoResearchClaw now supports loading open-source and custom skills from any discipline to further enhance your research experience. 19 pre-loaded skills are included as ready-to-use references, covering scientific writing, experiment design, chemistry, biology, and more — including an [A-Evolve](https://github.com/A-EVO-Lab/a-evolve) agentic evolution skill contributed by the community. Load your own via `researchclaw skills install` or drop a `SKILL.md` into `.claude/skills/`. See [Skills Library](#-skills-library).
+- **[03/30/2026]** **Flexible Skill Loading** — AutoResearchClaw now supports loading open-source and custom skills from any discipline to further enhance your research experience. 20 pre-loaded skills are included as ready-to-use references, covering scientific writing, experiment design, chemistry, biology, and more — including an [A-Evolve](https://github.com/A-EVO-Lab/a-evolve) agentic evolution skill contributed by the community. Load your own via `researchclaw skills install` or drop a `SKILL.md` into `.claude/skills/`. See [Skills Library](#-skills-library).
 - **[03/22/2026]** [v0.3.2](https://github.com/aiming-lab/AutoResearchClaw/releases/tag/v0.3.2) — **Cross-Platform Support + Major Stability** — AutoResearchClaw now runs on any ACP-compatible agent backend (Claude Code, Codex CLI, Copilot CLI, Gemini CLI, Kimi CLI) and supports messaging platforms (Discord, Telegram, Lark, WeChat) via OpenClaw bridge. New CLI-agent code generation backend delegates Stages 10 & 13 to external CLI agents with budget control and timeout management. Also includes anti-fabrication system (VerifiedRegistry + experiment diagnosis & repair loop), 100+ bug fixes, modular executor refactoring, `--resume` auto-detection, LLM retry hardening, and community-reported fixes.
 
 <details>
@@ -358,7 +363,7 @@ Phase D: Experiment Design         Phase H: Finalization
 | **Express** | `--mode express` | Quick review — only 3 most critical gates |
 | **Custom** | `--mode custom` | Define per-stage policies via `stage_policies` config |
 
-### Co-Pilot Workflow
+### Co-Pilot Workflow(updated Apr 13, added experiment to prove the best)
 
 ```
 You: researchclaw run --topic "Quantum noise as neural network regularization" --mode co-pilot
@@ -528,7 +533,7 @@ In controlled A/B experiments (same topic, same LLM, same configuration):
 
 ## 🧩 Skills Library
 
-AutoResearchClaw now supports loading **open-source and custom skills** to further enhance your research experience. We also ship with **19 pre-loaded built-in skills** (scientific writing, literature search, chemistry, biology, and more) as ready-to-use references, offering a high degree of flexibility out of the box. Disable any skill by adding `enabled: false` to its frontmatter.
+AutoResearchClaw now supports loading **open-source and custom skills** to further enhance your research experience. We also ship with **20 pre-loaded built-in skills** (scientific writing, literature search, chemistry, biology, and more) as ready-to-use references, offering a high degree of flexibility out of the box. Disable any skill by adding `enabled: false` to its frontmatter.
 
 **Sample built-in skills:**
 
@@ -538,7 +543,7 @@ AutoResearchClaw now supports loading **open-source and custom skills** to furth
 | **Domain** | `chemistry-rdkit` | Molecular analysis, SMILES, fingerprints, drug discovery |
 | **Experiment** | `literature-search` | Systematic review, PRISMA methodology |
 
-> See all 19 skills with `researchclaw skills list`.
+> See all 20 skills with `researchclaw skills list`.
 
 ### Load Your Own Skills
 
@@ -596,7 +601,7 @@ runtime:
 
 # === LLM ===
 llm:
-  provider: "openai-compatible"    # openai | openrouter | deepseek | minimax | volcengine | volcengine-coding-plan | byteplus | byteplus-coding-plan | acp | openai-compatible
+  provider: "openai-compatible"    # openai | openrouter | deepseek | minimax | acp | openai-compatible
   base_url: "https://..."          # API endpoint (required for openai-compatible)
   api_key_env: "OPENAI_API_KEY"    # Env var for API key (required for openai-compatible)
   api_key: ""                      # Or hardcode key here
@@ -606,12 +611,6 @@ llm:
   acp:                             # Only used when provider: "acp"
     agent: "claude"                # ACP agent CLI command (claude, codex, gemini, etc.)
     cwd: "."                       # Working directory for the agent
-
-# Volcengine / BytePlus presets via `researchclaw init`
-#   volcengine                 -> VOLCENGINE_API_KEY
-#   volcengine-coding-plan     -> VOLCENGINE_API_KEY
-#   byteplus                   -> BYTEPLUS_API_KEY
-#   byteplus-coding-plan       -> BYTEPLUS_API_KEY
 
 # === Experiment ===
 experiment:
@@ -754,6 +753,52 @@ openclaw_bridge:
 
 ---
 
+## 🔭 HEP-ph Physics Mode (collider_agent)
+
+When `project.profile=hep_ph` and `experiment.mode=collider_agent`, the
+pipeline routes Stage 12 through ColliderAgent (Lagrangian → FeynRules →
+MadGraph5 → figures via Magnus cloud) instead of the default Python ML
+sandbox.
+
+### Mid-stage HITL
+
+Stage 10 (CODE_GENERATION) becomes a HITL gate. The pipeline pauses with
+`collider_plan.md` open in `$EDITOR` so you can review or edit the physics
+prompt before ColliderAgent runs. Reject sends control back to Stage 9
+(EXPERIMENT_DESIGN); the hypothesis from Stage 8 stays intact.
+
+### Incremental experiments (`--incremental-experiment`)
+
+To **add new mass points or analyses to a completed run** without redoing
+the heavy simulation, re-launch with `--incremental-experiment` and either
+`--from-stage CODE_GENERATION` (also edit the prompt) or
+`--from-stage EXPERIMENT_RUN` (reuse existing prompt):
+
+```bash
+python -m researchclaw run --profile hep_ph --output artifacts/<run_id> \
+    --from-stage CODE_GENERATION --incremental-experiment
+```
+
+The Stage 12 sandbox will:
+
+1. Snapshot the existing `stage-12/` tree to `stage-12_v{N}/`.
+2. Save the previous `collider_plan.md` as `collider_plan.prev.md`.
+3. Build `workspace_manifest.json` listing reusable artifacts.
+4. Send ColliderAgent a three-part prompt:
+   `CONTINUATION CONTEXT` + `PRIOR PLAN` + your new delta.
+5. Merge ColliderAgent's new `results.json` with the snapshot's prior one
+   (metrics: new wins on collisions, old-only kept; artifact lists:
+   concat + dedupe). The merge is recorded in `incremental_merge.json`.
+
+Stage 13 then promotes the merged state to `experiment_final/` as before.
+
+> Note: re-entering at Stage 13 alone is a no-op in collider mode and will
+> NOT run any new physics — Stage 13 is a `shutil.copy2` passthrough.
+> PIVOT (Stage 15 decision) intentionally remains destructive because
+> changing the hypothesis makes prior events invalid.
+
+---
+
 ## 🙏 Acknowledgments
 
 Inspired by:
@@ -761,24 +806,6 @@ Inspired by:
 - 🔬 [AI Scientist](https://github.com/SakanaAI/AI-Scientist) (Sakana AI) — Automated research pioneer
 - 🧠 [AutoResearch](https://github.com/karpathy/autoresearch) (Andrej Karpathy) — End-to-end research automation
 - 🌐 [FARS](https://analemma.ai/blog/introducing-fars/) (Analemma) — Fully Automated Research System
-
----
-
-## ⚠️ Ethics and Responsible Use
-
-AutoResearchClaw is a research assistance tool, not a replacement for human researchers. We ask all users to observe the following principles:
-
-**Academic integrity.** Papers generated by AutoResearchClaw should be treated as drafts that require thorough human review, verification, and revision before any submission. Authors listed on a paper bear full responsibility for its content, claims, and correctness. Using AI-generated text without adequate human oversight or disclosure may violate academic integrity policies at your institution or target venue.
-
-**Transparency and disclosure.** We strongly encourage users to disclose the use of AutoResearchClaw (or any AI assistance) in their manuscripts, in accordance with the policies of the target venue (e.g., NeurIPS, ICML, ICLR, and most major venues now require disclosure of AI writing assistance). The Human-in-the-Loop Co-Pilot exists precisely to keep humans in meaningful control of research decisions.
-
-**Citation and attribution.** AutoResearchClaw verifies citations through a 4-layer pipeline, but no automated system is perfect. Users must manually verify that all references are real, relevant, and correctly cited before submission. Fabricated or misattributed citations undermine scientific trust.
-
-**Potential for misuse.** Like any powerful tool, AutoResearchClaw can be misused to produce low-quality or misleading research at scale. We do not condone using this system to generate paper mills, fraudulent submissions, or content designed to game peer review. We reserve the right to update the license or terms of use if systematic misuse is identified.
-
-**Dual use.** Autonomous research systems raise broader questions about the future of scientific labor, authorship norms, and review processes. We welcome community discussion on these topics and are committed to developing this technology responsibly.
-
-By using AutoResearchClaw, you agree to use it in a manner consistent with these principles and with the ethical guidelines of your institution and research community.
 
 ---
 
@@ -793,12 +820,14 @@ MIT — see [LICENSE](LICENSE) for details.
 If you find AutoResearchClaw useful, please cite:
 
 ```bibtex
-@misc{liu2026autoresearchclaw,
-  author       = {Liu, Jiaqi and Xia, Peng and Han, Siwei and Qiu, Shi and Zhang, Letian and Chen, Guiming and Tu, Haoqin and Yang, Xinyu and Zhou, Jiawei and Zhu, Hongtu and Li, Yun and Zhang, Jiaheng and Zhou, Yuyin and Zheng, Zeyu and Xie, Cihang and Ding, Mingyu and Yao, Huaxiu},
-  title        = {AutoResearchClaw: Fully Autonomous Research from Idea to Paper},
-  year         = {2026},
-  organization = {GitHub},
-  url          = {https://github.com/aiming-lab/AutoResearchClaw},
+@misc{liu2026autoresearchclawselfreinforcingautonomousresearch,
+      title={AutoResearchClaw: Self-Reinforcing Autonomous Research with Human-AI Collaboration},
+      author={Jiaqi Liu and Shi Qiu and Mairui Li and Bingzhou Li and Haonian Ji and Siwei Han and Xinyu Ye and Peng Xia and Zihan Dong and Congyu Zhang and Letian Zhang and Guiming Chen and Haoqin Tu and Xinyu Yang and Lu Feng and Xujiang Zhao and Haifeng Chen and Jiawei Zhou and Xiao Wang and Weitong Zhang and Hongtu Zhu and Yun Li and Jieru Mei and Hongliang Fei and Jiaheng Zhang and Linjie Li and Linjun Zhang and Yuyin Zhou and Sheng Wang and Caiming Xiong and James Zou and Zeyu Zheng and Cihang Xie and Mingyu Ding and Huaxiu Yao},
+      year={2026},
+      eprint={2605.20025},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2605.20025},
 }
 ```
 

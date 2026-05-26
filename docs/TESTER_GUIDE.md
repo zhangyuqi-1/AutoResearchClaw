@@ -131,10 +131,10 @@ researchclaw --help
 ### ⚙️ Configuration
 
 ```bash
-cp config.researchclaw.example.yaml config.yaml
+cp config.researchclaw.example.yaml config.arc.yaml
 ```
 
-Edit `config.yaml` — here are the key fields:
+Edit `config.arc.yaml` — here are the key fields:
 
 ```yaml
 # === Project ===
@@ -203,14 +203,14 @@ export S2_API_KEY="your-s2-key"
 source .venv/bin/activate
 export OPENAI_API_KEY="sk-xxxx"       # or ANTHROPIC_API_KEY
 
-researchclaw run --config config.yaml --auto-approve
+researchclaw run --config config.arc.yaml --auto-approve
 ```
 
 ### With a Specific Topic
 
 ```bash
 researchclaw run \
-  --config config.yaml \
+  --config config.arc.yaml \
   --topic "Investigating the effect of curriculum learning on image classification with adaptive difficulty scheduling" \
   --auto-approve
 ```
@@ -238,7 +238,7 @@ Pipeline complete — deliverables at: artifacts/rc-20260315-XXXXXX-YYYY/deliver
 The pipeline supports checkpointing — just resume:
 
 ```bash
-researchclaw run --config config.yaml --resume
+researchclaw run --config config.arc.yaml --resume
 ```
 
 ---
@@ -310,7 +310,7 @@ Please reference this in your feedback, and add your own expert judgment.
 |---|------|---------|
 | F1 | **Feedback Report** (use template below) | Markdown format, named `feedback_<your-name>.md` |
 | F2 | **Full Output Directory** | Zip the entire `artifacts/rc-XXXXXX/` directory |
-| F3 | **Config File** | Your `config.yaml` (**remove API keys first!**) |
+| F3 | **Config File** | Your `config.arc.yaml` (**remove API keys first!**) |
 | F4 | **Terminal Log** (optional but helpful) | Copy of the terminal output during the run |
 
 ### The Four Dimensions of Feedback
@@ -472,7 +472,7 @@ Copy the template below, fill it out, and save as `feedback_<your-name>.md`:
 
 - [ ] Feedback report (`feedback_<name>.md`)
 - [ ] Full output directory (`artifacts/rc-XXXXXX.zip`)
-- [ ] Config file (`config.yaml`, API keys removed)
+- [ ] Config file (`config.arc.yaml`, API keys removed)
 - [ ] Terminal log (optional)
 ````
 
@@ -493,7 +493,7 @@ A full pipeline run costs roughly **$5–15** in API fees, depending on the mode
 Resume from the checkpoint:
 
 ```bash
-researchclaw run --config config.yaml --resume
+researchclaw run --config config.arc.yaml --resume
 ```
 
 ### Q4: Can I use a non-English research topic?
@@ -516,7 +516,7 @@ If you have an NVIDIA GPU with Docker + NVIDIA Container Toolkit:
 # 1. Build the experiment image
 docker build -t researchclaw/experiment:latest researchclaw/docker/
 
-# 2. Update config.yaml:
+# 2. Update config.arc.yaml:
 #   experiment:
 #     mode: "docker"
 #     docker:
@@ -525,7 +525,7 @@ docker build -t researchclaw/experiment:latest researchclaw/docker/
 #       network_policy: "setup_only"  # recommended default
 
 # 3. Run
-researchclaw run --config config.yaml --auto-approve
+researchclaw run --config config.arc.yaml --auto-approve
 ```
 
 Docker mode uses a three-phase execution model: pip install (network on) → setup.py (network on) → experiment (network off). The image includes pre-cached datasets (CIFAR-10/100, MNIST, FashionMNIST, STL-10, SVHN) so standard benchmarks work without network access.

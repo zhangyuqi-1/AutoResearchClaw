@@ -43,6 +43,166 @@ _CONTINUOUS_ENVS = {
 }
 
 
+def _execute_collider_plan_generation(
+    stage_dir: Path,
+    run_dir: Path,
+    config: RCConfig,
+    adapters: AdapterBundle,
+    *,
+    llm: LLMClient | None = None,
+    prompts: PromptManager | None = None,
+) -> StageResult:
+    """Stage 10 (collider_agent mode): generate a ColliderAgent physics prompt.
+
+    Reads the experiment design plan from Stage 9 and uses the LLM to
+    translate it into a detailed ColliderAgent-compatible Markdown prompt
+    (similar to ``paper-reproduction/*/prompt_figure_N.md``).
+
+    The generated prompt is saved as ``collider_plan.md`` in the stage
+    directory.  Stage 12 reads this file and invokes Claude Code with the
+    ColliderAgent skills to execute the full physics pipeline.
+    """
+    exp_plan = _read_prior_artifact(run_dir, "exp_plan.yaml") or ""
+    hypothesis = _read_prior_artifact(run_dir, "hypotheses.json") or ""
+    topic = config.research.topic
+
+    # System prompt: instruct LLM to produce a ColliderAgent-style prompt
+    system_prompt = (
+        "You are a particle physics expert generating a detailed execution plan for "
+        "the ColliderAgent framework. ColliderAgent uses Claude Code to orchestrate "
+        "the full collider phenomenology pipeline:\n"
+        "  1. FeynRules model generation from a Lagrangian\n"
+        "  2. UFO export for MadGraph5\n"
+        "  3. MadGraph5 event generation with Pythia8/Delphes\n"
+        "  4. MadAnalysis5 analysis\n"
+        "  5. Numerical post-processing and figure generation\n\n"
+        "The execution plan must follow this Markdown structure:\n"
+        "  # 1. Target\n"
+        "  (what figure/result to produce)\n"
+        "  # 2. Model\n"
+        "  ## 2.1 Lagrangian\n"
+        "  ## 2.2 Parameters\n"
+        "  ## 2.3 Particles\n"
+        "  # 3. Collider Process\n"
+        "  ## 3.1 Signal Process\n"
+        "  ## 3.2 Background Process (if any)\n"
+        "  # 4. Numerical Analysis\n"
+        "  (step-by-step procedure)\n\n"
+        "Be as precise as possible with formulas, parameter values, and analysis steps. "
+        "If the topic does not have a defined Lagrangian or specific HEP process, "
+        "generate an equivalent phenomenological study appropriate for the topic. "
+        "If MadGraph/Monte Carlo is not needed (pure numerical analysis), skip those steps "
+        "and describe only the post-processing steps."
+    )
+    user_prompt = (
+        f"Research topic: {topic}\n\n"
+        f"Experiment design plan:\n{exp_plan}\n\n"
+        f"Hypotheses:\n{hypothesis}\n\n"
+        "Generate a detailed ColliderAgent execution plan as a Markdown document."
+    )
+
+    collider_plan: str
+    if llm is not None:
+        try:
+            resp = _chat_with_prompt(llm, system_prompt, user_prompt, max_tokens=4096)
+            collider_plan = resp.content.strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Stage 10 (collider_agent): LLM call failed (%s) — using fallback plan", exc)
+            collider_plan = _fallback_collider_plan(topic, exp_plan)
+    else:
+        collider_plan = _fallback_collider_plan(topic, exp_plan)
+
+    # Write the plan
+    plan_path = stage_dir / "collider_plan.md"
+    plan_path.write_text(collider_plan, encoding="utf-8")
+    logger.info("Stage 10 (collider_agent): wrote physics prompt to %s", plan_path)
+
+    # Also write a metadata file
+    import json as _json
+    meta = {
+        "generated": _utcnow_iso(),
+        "mode": "collider_agent",
+        "topic": topic,
+        "plan_file": "collider_plan.md",
+        "plan_length_chars": len(collider_plan),
+    }
+    (stage_dir / "collider_meta.json").write_text(
+        _json.dumps(meta, indent=2), encoding="utf-8"
+    )
+
+    # Satisfy Stage 10 contract (output_files requires "experiment/" and
+    # "experiment_spec.md").  In collider_agent mode there is no Python
+    # experiment; instead we place the ColliderAgent prompt inside the
+    # experiment/ directory so downstream contract validation passes.
+    exp_dir = stage_dir / "experiment"
+    exp_dir.mkdir(exist_ok=True)
+    (exp_dir / "collider_plan.md").write_text(collider_plan, encoding="utf-8")
+
+    spec_md = (
+        f"# Experiment Specification (collider_agent mode)\n\n"
+        f"**Topic:** {topic}\n\n"
+        f"**Backend:** ColliderAgent — full HEP pipeline via Claude Code\n\n"
+        f"**Physics plan:** `collider_plan.md`\n\n"
+        f"Stage 12 will invoke the Claude Code CLI with the ColliderAgent skills\n"
+        f"to execute the Lagrangian → FeynRules → UFO → MadGraph5 → Delphes →\n"
+        f"MadAnalysis5 pipeline and produce publication-quality figures.\n"
+    )
+    (stage_dir / "experiment_spec.md").write_text(spec_md, encoding="utf-8")
+
+    return StageResult(
+        stage=Stage.CODE_GENERATION,
+        status=StageStatus.DONE,
+        artifacts=("collider_plan.md", "collider_meta.json", "experiment/", "experiment_spec.md"),
+        evidence_refs=("stage-10/collider_plan.md",),
+    )
+
+
+def _fallback_collider_plan(topic: str, exp_plan: str) -> str:
+    """Generate a minimal fallback ColliderAgent prompt when LLM is unavailable."""
+    return f"""# 1. Target
+
+Investigate the following physics topic using the ColliderAgent pipeline:
+**{topic}**
+
+{exp_plan or "Execute the relevant collider phenomenology analysis and generate exclusion contours or kinematic distributions as appropriate."}
+
+---
+
+# 2. Model
+
+## 2.1 Lagrangian
+
+Use the Standard Model as baseline. For beyond-SM contributions,
+refer to the experiment design plan above.
+
+## 2.2 Parameters
+
+Use SM parameters. Scan over new-physics parameters as described in the plan.
+
+## 2.3 Particles
+
+Use standard SM particles.
+
+---
+
+# 3. Collider Process
+
+## 3.1 Signal Process
+
+Run the relevant signal processes at the LHC (√s = 13 TeV).
+
+---
+
+# 4. Numerical Analysis
+
+## Step 1: Execute the phenomenology pipeline
+Follow the experiment design plan to produce the required figures and results.
+
+## Step 2: Generate output figures
+Save all figures to output/figures/ in PDF and PNG format.
+"""
+
+
 def _check_rl_compatibility(code: str) -> list[str]:
     """Detect DQN + continuous-action environment mismatches.
 
@@ -73,6 +233,13 @@ def _execute_code_generation(
     llm: LLMClient | None = None,
     prompts: PromptManager | None = None,
 ) -> StageResult:
+    # ── ColliderAgent mode: generate a physics prompt instead of Python code ─
+    if config.experiment.mode == "collider_agent":
+        return _execute_collider_plan_generation(
+            stage_dir, run_dir, config, adapters, llm=llm, prompts=prompts
+        )
+    # ── End ColliderAgent bypass ──────────────────────────────────────────────
+
     exp_plan = _read_prior_artifact(run_dir, "exp_plan.yaml") or ""
     metric = config.experiment.metric_key
     max_repair = 5  # BUG-14: Increased from 3 to give more chances for critical bugs

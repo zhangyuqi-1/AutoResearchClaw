@@ -11,18 +11,23 @@
 </p>
 
 <p align="center">
+  📄 <b>Unser Paper ist auf arXiv — schau es dir an!</b> <a href="https://arxiv.org/abs/2605.20025"><i>AutoResearchClaw: Self-Reinforcing Autonomous Research with Human-AI Collaboration</i></a>
+</p>
+
+<p align="center">
   <img src="../image/framework_v2.png" width="100%" alt="AutoResearchClaw Framework">
 </p>
 
 
 <p align="center">
+  <a href="https://arxiv.org/abs/2605.20025"><img src="https://img.shields.io/badge/arXiv-2605.20025-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <a href="https://huggingface.co/datasets/AIMING-Lab-UNC/ARC-Bench"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-ARC--Bench-yellow" alt="ARC-Bench on Hugging Face"></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License"></a>
   <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="#testing"><img src="https://img.shields.io/badge/Tests-2699%20passed-brightgreen?logo=pytest&logoColor=white" alt="2699 Tests Passed"></a>
   <a href="https://github.com/aiming-lab/AutoResearchClaw"><img src="https://img.shields.io/badge/GitHub-AutoResearchClaw-181717?logo=github" alt="GitHub"></a>
   <a href="#-openclaw-integration"><img src="https://img.shields.io/badge/OpenClaw-Compatible-ff4444?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg==" alt="OpenClaw Compatible"></a>
   <a href="https://discord.gg/u4ksqW5P"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="#%EF%B8%8F-ethics-and-responsible-use"><img src="https://img.shields.io/badge/⚠️_Ethics-Read_Before_Use-orange" alt="Ethics Guidelines"></a>
 </p>
 
 <p align="center">
@@ -64,9 +69,9 @@
 ---
 
 ## 🔥 News
-- **[04/08/2026]** **Ethik- und Richtlinien zur verantwortungsvollen Nutzung!** — Umfassende Ethikrichtlinien zu akademischer Integrität, Transparenz, Zitatverifizierung, Missbrauchsprävention und Dual-Use hinzugefügt. KI-generierte Arbeiten sind Entwürfe — menschliche Überprüfung ist unerlässlich.
+- **[05/19/2026]** **v0.5.0** — **Multi-Domain-Experimentagenten + ARC-Bench** — Zwei wesentliche Updates. **(1) Domaenenspezifische Ausfuehrungsagenten:** Die Experimentphase (Stufen 10–13) leitet nun ueber die Standard-ML-Sandbox hinaus an Fachagenten weiter — **Hochenergiephysik** (ColliderAgent: FeynRules → MadGraph5 → Delphes ueber die Magnus-Cloud), **Biologie** (COBRApy-Stoffwechselmodellierung im Genommassstab) und **Statistik** (Simulationsstudien-Agent), mit einem generischen Docker-Executor fuer Chemie/Materialien. Die Pipeline waehlt den passenden Executor automatisch anhand der Forschungsdomaene. **(2) ARC-Bench:** ein offener Benchmark fuer autonome Forschung mit **55 Themen**, der **ML (25), Hochenergiephysik (10), Quanten (10), Biologie (7) und Statistik (3)** abdeckt — jedes Thema mit Manifest und Bewertungsrubrik (`experiments/arc_bench/`, jetzt auch auf [🤗 Hugging Face](https://huggingface.co/datasets/AIMING-Lab-UNC/ARC-Bench)). **[→ Leitfaden zur Domaenenintegration](DOMAIN_INTEGRATION_GUIDE.md)**
 - **[04/01/2026]** **v0.4.0** — **Human-in-the-Loop Co-Pilot-System** — AutoResearchClaw ist nicht mehr rein autonom. Das neue HITL-System fuegt 6 Interventionsmodi hinzu (`full-auto`, `gate-only`, `checkpoint`, `step-by-step`, `co-pilot`, `custom`), stufenspezifische Richtlinien und tiefe Mensch-KI-Kollaboration. Enthalten: Ideen-Workshop zur gemeinsamen Hypothesenerstellung, Baseline-Navigator zur Ueberpruefung des Experimentdesigns, Paper-Co-Writer fuer kollaboratives Verfassen, SmartPause (konfidenzgesteuerte dynamische Intervention), ALHF-Interventionslernen, Anti-Halluzinations-Behauptungsverifikation, Kostenbudget-Leitplanken, Pipeline-Verzweigung fuer parallele Hypothesenerkundung und CLI-Befehle (`attach`/`status`/`approve`/`reject`/`guide`). **[→ Vollstaendige HITL-Anleitung](HITL_GUIDE.md)**
-- **[03/30/2026]** **Flexibles Skill-Laden** — AutoResearchClaw unterstuetzt jetzt das Laden von Open-Source- und benutzerdefinierten Skills aus jeder Disziplin, um Ihr Forschungserlebnis weiter zu verbessern. 19 vorinstallierte Skills sind als sofort einsetzbare Referenzen enthalten, die wissenschaftliches Schreiben, Experimentdesign, Chemie, Biologie und mehr abdecken — einschliesslich eines [A-Evolve](https://github.com/A-EVO-Lab/a-evolve) Agentic-Evolution-Skills, der von der Community beigesteuert wurde. Laden Sie eigene ueber `researchclaw skills install` oder legen Sie eine `SKILL.md` in `.claude/skills/` ab. Siehe [Skills-Bibliothek](#-skills-bibliothek).
+- **[03/30/2026]** **Flexibles Skill-Laden** — AutoResearchClaw unterstuetzt jetzt das Laden von Open-Source- und benutzerdefinierten Skills aus jeder Disziplin, um Ihr Forschungserlebnis weiter zu verbessern. 20 vorinstallierte Skills sind als sofort einsetzbare Referenzen enthalten, die wissenschaftliches Schreiben, Experimentdesign, Chemie, Biologie und mehr abdecken — einschliesslich eines [A-Evolve](https://github.com/A-EVO-Lab/a-evolve) Agentic-Evolution-Skills, der von der Community beigesteuert wurde. Laden Sie eigene ueber `researchclaw skills install` oder legen Sie eine `SKILL.md` in `.claude/skills/` ab. Siehe [Skills-Bibliothek](#-skills-bibliothek).
 - **[03/22/2026]** [v0.3.2](https://github.com/aiming-lab/AutoResearchClaw/releases/tag/v0.3.2) — **Plattformuebergreifende Unterstuetzung + grosse Stabilitaet** — AutoResearchClaw laeuft jetzt mit jedem ACP-kompatiblen Agenten-Backend (Claude Code, Codex CLI, Copilot CLI, Gemini CLI, Kimi CLI) und unterstuetzt Messaging-Plattformen (Discord, Telegram, Lark, WeChat) ueber die OpenClaw-Bruecke. Neues CLI-Agent-Code-Generierungs-Backend delegiert Stages 10 und 13 an externe CLI-Agenten mit Budgetkontrolle und Timeout-Management. Enthaelt Anti-Fabrication-System (VerifiedRegistry + Experiment-Diagnose- und Reparaturschleife), 100+ Bugfixes, modulares Executor-Refactoring, `--resume` Auto-Erkennung, LLM-Retry-Haertung und Community-Fixes.
 
 <details>
@@ -528,7 +533,7 @@ In kontrollierten A/B-Experimenten (gleiches Thema, gleiches LLM, gleiche Konfig
 
 ## 🧩 Skills-Bibliothek
 
-AutoResearchClaw unterstuetzt jetzt das Laden von **Open-Source- und benutzerdefinierten Skills**, um Ihr Forschungserlebnis weiter zu verbessern. Wir liefern ausserdem **19 vorinstallierte integrierte Skills** (wissenschaftliches Schreiben, Literatursuche, Chemie, Biologie und mehr) als sofort einsetzbare Referenzen mit, die von Anfang an ein hohes Mass an Flexibilitaet bieten. Deaktivieren Sie einen Skill, indem Sie `enabled: false` in seinen Frontmatter einfuegen.
+AutoResearchClaw unterstuetzt jetzt das Laden von **Open-Source- und benutzerdefinierten Skills**, um Ihr Forschungserlebnis weiter zu verbessern. Wir liefern ausserdem **20 vorinstallierte integrierte Skills** (wissenschaftliches Schreiben, Literatursuche, Chemie, Biologie und mehr) als sofort einsetzbare Referenzen mit, die von Anfang an ein hohes Mass an Flexibilitaet bieten. Deaktivieren Sie einen Skill, indem Sie `enabled: false` in seinen Frontmatter einfuegen.
 
 **Beispiele fuer integrierte Skills:**
 
@@ -538,7 +543,7 @@ AutoResearchClaw unterstuetzt jetzt das Laden von **Open-Source- und benutzerdef
 | **Domaene** | `chemistry-rdkit` | Molekuelanalyse, SMILES, Fingerprints, Wirkstoffforschung |
 | **Experiment** | `literature-search` | Systematische Uebersicht, PRISMA-Methodik |
 
-> Alle 19 Skills anzeigen mit `researchclaw skills list`.
+> Alle 20 Skills anzeigen mit `researchclaw skills list`.
 
 ### Eigene Skills laden
 
@@ -758,24 +763,6 @@ Inspiriert von:
 
 ---
 
-## ⚠️ Ethik und verantwortungsvolle Nutzung
-
-AutoResearchClaw ist ein Forschungshilfswerkzeug, kein Ersatz für menschliche Forscher. Wir bitten alle Nutzer, die folgenden Grundsätze einzuhalten:
-
-**Akademische Integrität.** Von AutoResearchClaw generierte Arbeiten sollten als Entwürfe behandelt werden, die vor der Einreichung einer gründlichen menschlichen Überprüfung, Verifizierung und Überarbeitung bedürfen. Die auf einer Arbeit aufgeführten Autoren tragen die volle Verantwortung für deren Inhalt, Aussagen und Korrektheit. Die Verwendung von KI-generiertem Text ohne angemessene menschliche Aufsicht oder Offenlegung kann gegen die akademischen Integritätsrichtlinien Ihrer Institution oder der Zielkonferenz verstoßen.
-
-**Transparenz und Offenlegung.** Wir empfehlen dringend, die Nutzung von AutoResearchClaw (oder jeder KI-Unterstützung) in Manuskripten offenzulegen, gemäß den Richtlinien der Zielkonferenz (z. B. verlangen NeurIPS, ICML, ICLR und andere große Konferenzen jetzt die Offenlegung von KI-Schreibhilfe). Der Human-in-the-Loop Co-Pilot existiert gerade deshalb, um eine sinnvolle menschliche Kontrolle über Forschungsentscheidungen aufrechtzuerhalten.
-
-**Zitation und Zuordnung.** AutoResearchClaw verifiziert Zitate über eine 4-Schichten-Pipeline, aber kein automatisiertes System ist perfekt. Nutzer müssen vor der Einreichung manuell überprüfen, dass alle Zitate echt, relevant und korrekt referenziert sind. Gefälschte oder falsch zugeordnete Zitate untergraben das wissenschaftliche Vertrauen.
-
-**Missbrauchsrisiko.** Wie jedes leistungsstarke Werkzeug kann AutoResearchClaw missbraucht werden, um minderwertige oder irreführende Forschung in großem Maßstab zu produzieren. Wir unterstützen nicht die Verwendung dieses Systems zur Erzeugung von Papierfabriken, betrügerischen Einreichungen oder Inhalten, die darauf abzielen, das Peer-Review-Verfahren zu manipulieren. Bei systematischem Missbrauch behalten wir uns das Recht vor, die Lizenz oder Nutzungsbedingungen zu aktualisieren.
-
-**Doppelter Verwendungszweck.** Autonome Forschungssysteme werfen breitere Fragen über die Zukunft der wissenschaftlichen Arbeit, Autorenschaftsnormen und Begutachtungsprozesse auf. Wir begrüßen Diskussionen der Gemeinschaft zu diesen Themen und setzen uns für eine verantwortungsvolle Entwicklung dieser Technologie ein.
-
-Durch die Nutzung von AutoResearchClaw stimmen Sie zu, es in einer Weise zu verwenden, die mit diesen Grundsätzen sowie den ethischen Richtlinien Ihrer Institution und Forschungsgemeinschaft vereinbar ist.
-
----
-
 ## 📄 Lizenz
 
 MIT — siehe [LICENSE](../LICENSE) fuer Details.
@@ -787,12 +774,14 @@ MIT — siehe [LICENSE](../LICENSE) fuer Details.
 Wenn du AutoResearchClaw nuetzlich findest, zitiere bitte:
 
 ```bibtex
-@misc{liu2026autoresearchclaw,
-  author       = {Liu, Jiaqi and Xia, Peng and Han, Siwei and Qiu, Shi and Zhang, Letian and Chen, Guiming and Tu, Haoqin and Yang, Xinyu and Zhou, Jiawei and Zhu, Hongtu and Li, Yun and Zhang, Jiaheng and Zhou, Yuyin and Zheng, Zeyu and Xie, Cihang and Ding, Mingyu and Yao, Huaxiu},
-  title        = {AutoResearchClaw: Fully Autonomous Research from Idea to Paper},
-  year         = {2026},
-  organization = {GitHub},
-  url          = {https://github.com/aiming-lab/AutoResearchClaw},
+@misc{liu2026autoresearchclawselfreinforcingautonomousresearch,
+      title={AutoResearchClaw: Self-Reinforcing Autonomous Research with Human-AI Collaboration},
+      author={Jiaqi Liu and Shi Qiu and Mairui Li and Bingzhou Li and Haonian Ji and Siwei Han and Xinyu Ye and Peng Xia and Zihan Dong and Congyu Zhang and Letian Zhang and Guiming Chen and Haoqin Tu and Xinyu Yang and Lu Feng and Xujiang Zhao and Haifeng Chen and Jiawei Zhou and Xiao Wang and Weitong Zhang and Hongtu Zhu and Yun Li and Jieru Mei and Hongliang Fei and Jiaheng Zhang and Linjie Li and Linjun Zhang and Yuyin Zhou and Sheng Wang and Caiming Xiong and James Zou and Zeyu Zheng and Cihang Xie and Mingyu Ding and Huaxiu Yao},
+      year={2026},
+      eprint={2605.20025},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2605.20025},
 }
 ```
 

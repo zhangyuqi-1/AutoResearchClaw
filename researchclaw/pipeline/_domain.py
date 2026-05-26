@@ -16,6 +16,7 @@ from researchclaw.domains.detector import DomainProfile, detect_domain as _detec
 
 _TOP_VENUES_BY_PARENT: dict[str, str] = {
     "ml": "NeurIPS, ICML, ICLR",
+    "hep_ph": "JHEP, PRD, PRL, EPJC, Phys.Lett.B",
     "physics": "Physical Review Letters, Nature Physics, JHEP",
     "chemistry": "JACS, Nature Chemistry, Angewandte Chemie",
     "economics": "AER, Econometrica, QJE, Review of Economic Studies",
@@ -30,6 +31,7 @@ _TOP_VENUES_BY_PARENT: dict[str, str] = {
 
 _DISPLAY_NAME_BY_PARENT: dict[str, str] = {
     "ml": "machine learning",
+    "hep_ph": "high energy physics phenomenology",
     "physics": "physics",
     "chemistry": "chemistry",
     "economics": "economics",
@@ -44,6 +46,7 @@ _DISPLAY_NAME_BY_PARENT: dict[str, str] = {
 
 _COARSE_DOMAIN_ALIASES: tuple[tuple[str, str], ...] = (
     ("ml_", "ml"),
+    ("hep_ph", "hep_ph"),   # exact prefix match before generic physics
     ("physics_", "physics"),
     ("chemistry_", "chemistry"),
     ("biology_", "biology"),
@@ -121,3 +124,67 @@ def _detect_domain(topic: str, domains: tuple[str, ...] = ()) -> tuple[str, str,
 def _is_ml_domain(domain_id: str) -> bool:
     """Check if the detected legacy coarse domain is ML/AI."""
     return domain_id == "ml"
+
+
+# ---------------------------------------------------------------------------
+# Prompt-bank domain selection
+# ---------------------------------------------------------------------------
+
+# Coarse IDs that map to the HEP-phenomenology prompt bank. Anything else
+# falls back to the ML bank — that is the safe default because the ML bank
+# uses general research vocabulary that works for most domains. Future
+# forks (chemistry, economics, …) are added here as their prompt banks land.
+_HEP_PROMPT_BANK_IDS: frozenset[str] = frozenset({"hep_ph"})
+
+
+def _prompt_bank_domain_from_config(config: object) -> str:
+    """Pick the prompt bank (``"ml"`` or ``"hep_ph"``) for this run.
+
+    Resolution order:
+    1. ``config.project.profile`` (set by ``--profile`` or ``project.profile``)
+       — the explicit user choice wins.
+    2. Topic-based detection via :func:`_detect_domain`. This catches runs
+       where the user did not set a profile but the topic is unmistakably
+       HEP-phenomenology (dark matter, Z-prime, BSM, …).
+    3. Fallback to ``"ml"``.
+    """
+    profile_id = ""
+    try:
+        profile_id = str(getattr(getattr(config, "project", object()), "profile", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        profile_id = ""
+    if profile_id in _HEP_PROMPT_BANK_IDS:
+        return "hep_ph"
+    if profile_id:
+        return "ml"
+
+    topic = ""
+    domains: tuple[str, ...] = ()
+    try:
+        research = getattr(config, "research", None)
+        if research is not None:
+            topic = str(getattr(research, "topic", "") or "")
+            domains_raw = getattr(research, "domains", ()) or ()
+            domains = tuple(str(d) for d in domains_raw)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Explicit domain list takes precedence over keyword detection, which
+    # has a known limitation (it strips hyphens before matching, so the
+    # literal arXiv category "hep-ph" gets mangled). Trusting an explicitly
+    # configured ``hep-ph`` / ``hep-ex`` avoids that bug.
+    for d in domains:
+        tag = str(d).strip().lower()
+        if tag in {"hep-ph", "hep_ph", "hep-ex", "hep_ex"}:
+            return "hep_ph"
+
+    if not topic:
+        return "ml"
+
+    try:
+        coarse_id, _display, _venues = _detect_domain(topic, domains)
+    except Exception:  # noqa: BLE001
+        return "ml"
+    if coarse_id in _HEP_PROMPT_BANK_IDS:
+        return "hep_ph"
+    return "ml"

@@ -82,6 +82,24 @@ def create_sandbox(config: ExperimentConfig, workdir: Path) -> SandboxProtocol:
 
         return ColabDriveSandbox(colab_cfg, workdir)
 
+    if config.mode == "collider_agent":
+        from researchclaw.experiment.collider_agent_sandbox import ColliderAgentSandbox
+
+        ca_cfg = config.collider_agent
+        return ColliderAgentSandbox(ca_cfg, workdir)
+
+    if config.mode == "biology_agent":
+        from researchclaw.experiment.biology_agent_sandbox import BiologyAgentSandbox
+
+        ba_cfg = config.biology_agent
+        return BiologyAgentSandbox(ba_cfg, workdir)
+
+    if config.mode == "stat_agent":
+        from researchclaw.experiment.stat_agent_sandbox import StatAgentSandbox
+
+        sa_cfg = config.stat_agent
+        return StatAgentSandbox(sa_cfg, workdir)
+
     if config.mode != "sandbox":
         raise RuntimeError(
             f"Unsupported experiment mode for create_sandbox(): {config.mode}"

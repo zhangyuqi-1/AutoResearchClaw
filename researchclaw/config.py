@@ -102,6 +102,9 @@ EXPERIMENT_MODES = {
     "ssh_remote",
     "colab_drive",
     "agentic",
+    "collider_agent",  # Physics: ColliderAgent via Claude Code + Magnus
+    "biology_agent",   # Biology: Biology-Agent (FBA / pFBA / FVA via COBRApy + BIGG) via Claude Code
+    "stat_agent",      # Statistics: stat_research_agent (sim studies, CI/coverage) via Claude Code
 }
 CLI_AGENT_PROVIDERS = {"llm", "claude_code", "codex"}
 SUBMISSION_PROFILES = {"default", "ei_conference"}
@@ -131,6 +134,7 @@ class ValidationResult:
 class ProjectConfig:
     name: str
     mode: str = "docs-first"
+    profile: str = ""  # empty = auto-detect; non-empty forces domain profile by id
 
 
 @dataclass(frozen=True)
@@ -299,6 +303,125 @@ class AgenticConfig:
 
 
 @dataclass(frozen=True)
+class ColliderAgentConfig:
+    """Configuration for ColliderAgent physics experiment mode.
+
+    Uses Claude Code CLI together with ColliderAgent skills (FeynRules,
+    MadGraph5, MadAnalysis5 via Magnus cloud) to run end-to-end collider
+    physics simulations from a natural-language Lagrangian description.
+
+    Workflow:
+    1. Stage 10 generates a detailed physics prompt (collider_plan.md)
+    2. Stage 12 invokes ``claude -p`` with ColliderAgent skills mounted
+    3. Claude Code orchestrates the pheno-pipeline (model → events → analysis)
+    4. Figures and data files are collected as experiment artifacts
+    """
+
+    # Path to ColliderAgent repository (for skills/agents directories).
+    # Default points at the symlink under external/agents/ (see
+    # external/agents/README.md).  Upstream:
+    # https://github.com/HET-AGI/ColliderAgent
+    collider_agent_dir: str = "external/agents/ColliderAgent"
+    # Working directory for the physics simulation workspace
+    working_dir: str = "collider_workspace"
+    # Timeout for the full Claude Code session (seconds)
+    timeout_sec: int = 7200  # 2 hours — HEP sims can take a while
+    # Claude Code binary (empty = auto-detect via PATH)
+    claude_binary: str = ""
+    # Extra CLI arguments passed to ``claude`` (e.g. permissions bypass)
+    extra_args: tuple[str, ...] = ("--dangerously-skip-permissions",)
+    # Whether to install skills/agents to ~/.claude before running
+    install_skills: bool = True
+    # Max conversation turns for the Claude Code session
+    max_turns: int = 150
+    # Magnus cloud credentials (empty = use ~/.magnus/config.json)
+    magnus_address: str = ""
+    magnus_token: str = ""
+    # Incremental re-entry: when True, Stage 12 preserves the existing
+    # collider workspace, snapshots it under stage-12_v{N}/, and assembles
+    # a delta prompt so ColliderAgent ADDS new artifacts rather than
+    # regenerating prior ones. See
+    # docs/superpowers/specs/2026-04-24-hep-ph-hitl-incremental-design.md
+    incremental: bool = False
+
+
+@dataclass(frozen=True)
+class BiologyAgentConfig:
+    """Configuration for Biology-Agent (constraint-based metabolic modelling).
+
+    Uses Claude Code CLI together with Biology-Agent skills (gsmm-builder,
+    fba-simulator, flux-analyzer, etc.) to run end-to-end FBA / pFBA / FVA /
+    knockout pipelines from a natural-language biology prompt. Mirrors the
+    ColliderAgent integration but targets COBRApy + BIGG genome-scale
+    metabolic modelling instead of HEP Monte-Carlo simulation.
+
+    Workflow:
+    1. Stage 10 generates a biology execution prompt (biology_plan.md).
+    2. Stage 12 invokes ``claude -p`` with Biology-Agent skills mounted.
+    3. Claude Code orchestrates the metabolic pipeline (model -> medium ->
+       FBA -> pFBA -> FVA -> knockout screen -> figures).
+    4. Figures, CSV flux tables, and JSON results are collected as
+       experiment artifacts.
+    """
+
+    # Path to Biology-Agent repository (for skills/agents directories,
+    # which live at the repo ROOT — NOT under src/ — for this project).
+    # Default points at the symlink under external/agents/ (see
+    # external/agents/README.md for attribution).
+    biology_agent_dir: str = "external/agents/Biology-Agent"
+    # Working directory for the metabolic-modelling workspace.
+    working_dir: str = "biology_workspace"
+    # Timeout for the full Claude Code session (seconds).
+    timeout_sec: int = 3600  # 1 hour — typical FBA / scan runs are minutes
+    # Claude Code binary (empty = auto-detect via PATH).
+    claude_binary: str = ""
+    # Extra CLI arguments passed to ``claude`` (e.g. permissions bypass).
+    extra_args: tuple[str, ...] = ("--dangerously-skip-permissions",)
+    # Whether to install skills/agents to ~/.claude before running.
+    install_skills: bool = True
+    # Max conversation turns for the Claude Code session.
+    max_turns: int = 100
+    # Magnus cloud credentials (empty = use ~/.magnus/config.json if present;
+    # Biology-Agent runs locally in the default install but Magnus support
+    # is plumbed through here for future cloud-FBA backends).
+    magnus_address: str = ""
+    magnus_token: str = ""
+
+
+@dataclass(frozen=True)
+class StatAgentConfig:
+    """Configuration for stat_research_agent (statistical research domain).
+
+    Mirrors :class:`BiologyAgentConfig` / :class:`ColliderAgentConfig` but
+    targets simulation-study / inference research via Claude Code +
+    stat_research_agent skills (stat-problem-formulator,
+    stat-method-proposer, stat-experiment-designer, ...).
+
+    The agent is plain CPU Python (numpy/scipy/pandas/sklearn/statsmodels)
+    so there is no Magnus dependency — fields are kept for symmetry.
+    """
+
+    # Path to stat_research_agent repository (skills/agents live at the
+    # repo ROOT, mirroring Biology-Agent's layout).
+    stat_agent_dir: str = "external/agents/stat_research_agent"
+    # Working directory for the statistics experiment workspace.
+    working_dir: str = "stat_workspace"
+    # Timeout for the full Claude Code session (seconds).
+    timeout_sec: int = 1800  # 30 min — sim studies are usually fast
+    # Claude Code binary (empty = auto-detect via PATH).
+    claude_binary: str = ""
+    # Extra CLI arguments passed to ``claude``.
+    extra_args: tuple[str, ...] = ("--dangerously-skip-permissions",)
+    # Whether to install skills/agents to ~/.claude before running.
+    install_skills: bool = True
+    # Max conversation turns for the Claude Code session.
+    max_turns: int = 100
+    # Magnus credentials kept for symmetry; unused by statistics today.
+    magnus_address: str = ""
+    magnus_token: str = ""
+
+
+@dataclass(frozen=True)
 class CodeAgentConfig:
     """Configuration for the advanced multi-phase code generation agent."""
 
@@ -452,6 +575,9 @@ class ExperimentConfig:
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     docker: DockerSandboxConfig = field(default_factory=DockerSandboxConfig)
     agentic: AgenticConfig = field(default_factory=AgenticConfig)
+    collider_agent: ColliderAgentConfig = field(default_factory=ColliderAgentConfig)
+    biology_agent: BiologyAgentConfig = field(default_factory=BiologyAgentConfig)
+    stat_agent: StatAgentConfig = field(default_factory=StatAgentConfig)
     ssh_remote: SshRemoteConfig = field(default_factory=SshRemoteConfig)
     colab_drive: ColabDriveConfig = field(default_factory=ColabDriveConfig)
     code_agent: CodeAgentConfig = field(default_factory=CodeAgentConfig)
@@ -530,9 +656,19 @@ class ExportConfig:
 
 @dataclass(frozen=True)
 class PromptsConfig:
-    """Configuration for prompt externalization."""
+    """Configuration for prompt externalization.
+
+    ``custom_file`` points at a YAML that can override whole stage templates.
+    ``extra_prompts`` maps ``stage_name -> path|inline`` and is appended to
+    the user prompt of that stage at render time (alongside evolution-overlay
+    memory). Values are treated as file paths when the path exists on disk,
+    otherwise as inline text. Useful for domain hints that don't warrant a
+    full template override — e.g. extra physics-specific guidance for
+    ``synthesis`` or ``paper_draft`` in an HEP run.
+    """
 
     custom_file: str = ""  # Path to custom prompts YAML (empty = use defaults)
+    extra_prompts: tuple[tuple[str, str], ...] = ()  # (stage_name, path_or_text)
 
 
 # ── Agent B: Intelligence & Memory configs ────────────────────────
@@ -800,7 +936,9 @@ class RCConfig:
 
         return cls(
             project=ProjectConfig(
-                name=project["name"], mode=project.get("mode", "docs-first")
+                name=project["name"],
+                mode=project.get("mode", "docs-first"),
+                profile=str(project.get("profile", "") or ""),
             ),
             research=ResearchConfig(
                 topic=research["topic"],
@@ -857,6 +995,11 @@ class RCConfig:
             ),
             prompts=PromptsConfig(
                 custom_file=prompts.get("custom_file", ""),
+                extra_prompts=tuple(
+                    (str(stage), str(value))
+                    for stage, value in (prompts.get("extra_prompts") or {}).items()
+                    if str(stage).strip() and str(value).strip()
+                ),
             ),
             web_search=WebSearchConfig(
                 enabled=bool(web_search.get("enabled", True)),
@@ -897,6 +1040,7 @@ class RCConfig:
         *,
         project_root: str | Path | None = None,
         check_paths: bool = True,
+        profile_override: str | None = None,
     ) -> RCConfig:
         config_path = Path(path).expanduser().resolve()
         with config_path.open(encoding="utf-8") as handle:
@@ -906,6 +1050,35 @@ class RCConfig:
                 f"Config root must be a mapping, got {type(data).__name__}. "
                 f"Check that {config_path} is valid YAML."
             )
+
+        # Profile-driven deployment: if a domain profile is named (via
+        # ``project.profile:`` or --profile), let its deployment defaults fill
+        # gaps in the config dict. The user's config.yaml always wins; the
+        # profile only supplies keys the user left unset.
+        profile_id = profile_override
+        if not profile_id:
+            proj_section = data.get("project") or {}
+            if isinstance(proj_section, dict):
+                profile_id = proj_section.get("profile") or None
+        if profile_id:
+            try:
+                from researchclaw.domains.deploy import apply_profile_defaults
+
+                data = apply_profile_defaults(data, str(profile_id).strip())
+                project_section = data.get("project")
+                if not isinstance(project_section, dict):
+                    project_section = {}
+                project_section["profile"] = str(profile_id).strip()
+                data["project"] = project_section
+            except FileNotFoundError as exc:
+                import logging as _cfg_log
+
+                _cfg_log.getLogger(__name__).warning(
+                    "Profile '%s' not found — continuing without deployment defaults: %s",
+                    profile_id,
+                    exc,
+                )
+
         resolved_root = (
             Path(project_root).expanduser().resolve()
             if project_root
@@ -1049,6 +1222,63 @@ def _parse_agentic_config(data: dict[str, Any]) -> AgenticConfig:
     )
 
 
+def _parse_collider_agent_config(data: dict[str, Any]) -> ColliderAgentConfig:
+    if not data:
+        return ColliderAgentConfig()
+    extra_raw = data.get("extra_args", ("--dangerously-bypass-permissions",))
+    if isinstance(extra_raw, str):
+        extra_raw = [extra_raw]
+    return ColliderAgentConfig(
+        collider_agent_dir=data.get("collider_agent_dir", "external/agents/ColliderAgent"),
+        working_dir=data.get("working_dir", "collider_workspace"),
+        timeout_sec=_safe_int(data.get("timeout_sec"), 7200),
+        claude_binary=data.get("claude_binary", ""),
+        extra_args=tuple(extra_raw),
+        install_skills=bool(data.get("install_skills", True)),
+        max_turns=_safe_int(data.get("max_turns"), 150),
+        magnus_address=data.get("magnus_address", ""),
+        magnus_token=data.get("magnus_token", ""),
+    )
+
+
+def _parse_biology_agent_config(data: dict[str, Any]) -> BiologyAgentConfig:
+    if not data:
+        return BiologyAgentConfig()
+    extra_raw = data.get("extra_args", ("--dangerously-skip-permissions",))
+    if isinstance(extra_raw, str):
+        extra_raw = [extra_raw]
+    return BiologyAgentConfig(
+        biology_agent_dir=data.get("biology_agent_dir", "external/agents/Biology-Agent"),
+        working_dir=data.get("working_dir", "biology_workspace"),
+        timeout_sec=_safe_int(data.get("timeout_sec"), 3600),
+        claude_binary=data.get("claude_binary", ""),
+        extra_args=tuple(extra_raw),
+        install_skills=bool(data.get("install_skills", True)),
+        max_turns=_safe_int(data.get("max_turns"), 100),
+        magnus_address=data.get("magnus_address", ""),
+        magnus_token=data.get("magnus_token", ""),
+    )
+
+
+def _parse_stat_agent_config(data: dict[str, Any]) -> StatAgentConfig:
+    if not data:
+        return StatAgentConfig()
+    extra_raw = data.get("extra_args", ("--dangerously-skip-permissions",))
+    if isinstance(extra_raw, str):
+        extra_raw = [extra_raw]
+    return StatAgentConfig(
+        stat_agent_dir=data.get("stat_agent_dir", "external/agents/stat_research_agent"),
+        working_dir=data.get("working_dir", "stat_workspace"),
+        timeout_sec=_safe_int(data.get("timeout_sec"), 1800),
+        claude_binary=data.get("claude_binary", ""),
+        extra_args=tuple(extra_raw),
+        install_skills=bool(data.get("install_skills", True)),
+        max_turns=_safe_int(data.get("max_turns"), 100),
+        magnus_address=data.get("magnus_address", ""),
+        magnus_token=data.get("magnus_token", ""),
+    )
+
+
 def _parse_experiment_config(data: dict[str, Any]) -> ExperimentConfig:
     sandbox_data = data.get("sandbox") or {}
     docker_data = data.get("docker") or {}
@@ -1123,6 +1353,9 @@ def _parse_experiment_config(data: dict[str, Any]) -> ExperimentConfig:
             setup_script=colab_data.get("setup_script", ""),
         ),
         agentic=_parse_agentic_config(data.get("agentic") or {}),
+        collider_agent=_parse_collider_agent_config(data.get("collider_agent") or {}),
+        biology_agent=_parse_biology_agent_config(data.get("biology_agent") or {}),
+        stat_agent=_parse_stat_agent_config(data.get("stat_agent") or {}),
         code_agent=_parse_code_agent_config(data.get("code_agent") or {}),
         opencode=_parse_opencode_config(data.get("opencode") or {}),
         benchmark_agent=_parse_benchmark_agent_config(
@@ -1500,5 +1733,11 @@ def load_config(
     *,
     project_root: str | Path | None = None,
     check_paths: bool = True,
+    profile_override: str | None = None,
 ) -> RCConfig:
-    return RCConfig.load(path, project_root=project_root, check_paths=check_paths)
+    return RCConfig.load(
+        path,
+        project_root=project_root,
+        check_paths=check_paths,
+        profile_override=profile_override,
+    )

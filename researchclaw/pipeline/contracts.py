@@ -23,6 +23,7 @@ class StageContract:
     dod: str
     error_code: str
     max_retries: int = 1
+    collider_output_files: tuple[str, ...] = ()
 
 
 CONTRACTS: dict[Stage, StageContract] = {
@@ -101,6 +102,7 @@ CONTRACTS: dict[Stage, StageContract] = {
         stage=Stage.CODE_GENERATION,
         input_files=("exp_plan.yaml",),
         output_files=("experiment/", "experiment_spec.md"),
+        collider_output_files=("collider_plan.md",),
         dod="Multi-file experiment project + spec document",
         error_code="E10_CODEGEN_FAIL",
         max_retries=2,

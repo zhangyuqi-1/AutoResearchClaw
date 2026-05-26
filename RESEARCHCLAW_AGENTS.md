@@ -1,4 +1,4 @@
-# ResearchClaw — Agent Configuration
+# AutoResearchClaw — Agent Configuration
 
 ## Overview
 

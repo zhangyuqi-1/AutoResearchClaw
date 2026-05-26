@@ -40,13 +40,25 @@ class PromptBlocks:
     statistical_test_guidance: str = ""
     output_format_guidance: str = ""
 
+    # Export/publish stage blocks (stage 22)
+    export_publish_guidance: str = ""
+    """Domain-specific formatting guidance for the final export pass."""
+
+    preferred_template: str = ""
+    """Preferred LaTeX template name (e.g. ``jhep``, ``prd``) for export when the user
+    has not explicitly overridden ``export.target_conference``. Empty means "no preference"."""
+
 
 class PromptAdapter(ABC):
     """Base class for domain-specific prompt adapters.
 
-    Subclasses override methods to provide domain-specific prompt blocks.
-    The ML adapter returns empty strings for everything (meaning: use the
-    existing hardcoded behavior in prompts.py unchanged).
+    The narrative prose for each pipeline stage now lives in the active
+    :class:`~researchclaw.prompts.manager.PromptManager` bank (``ml`` or
+    ``hep_ph``). Adapters survive only as a *YAML-driven overlay* for the
+    three stages whose guidance is derived from ``DomainProfile`` fields
+    (code generation, experiment design, result analysis), plus the export
+    template hint. ML and HEP adapters both return empty blocks here —
+    their narrative content is already in the prompt bank.
     """
 
     def __init__(self, domain: DomainProfile) -> None:
@@ -63,6 +75,14 @@ class PromptAdapter(ABC):
     @abstractmethod
     def get_result_analysis_blocks(self, context: dict[str, Any]) -> PromptBlocks:
         """Return prompt blocks for the result analysis stage."""
+
+    def get_export_publish_blocks(self, context: dict[str, Any]) -> PromptBlocks:
+        """Return prompt blocks for the export/publish stage (stage 22).
+
+        Default: empty. Override to declare a preferred LaTeX template
+        (``preferred_template``) and any final-pass guidance.
+        """
+        return PromptBlocks()
 
     def get_blueprint_context(self) -> str:
         """Extra context injected into the blueprint generation prompt.
@@ -275,6 +295,14 @@ def _build_adapter_registry() -> dict[str, type[PromptAdapter]]:
     except ImportError:
         pass
     try:
+        from researchclaw.domains.adapters.biology import (
+            BiologyMetabolicPromptAdapter,
+        )
+        # Exact-id match wins over the generic "biology_" prefix above.
+        registry["biology_metabolic"] = BiologyMetabolicPromptAdapter
+    except ImportError:
+        pass
+    try:
         from researchclaw.domains.adapters.chemistry import ChemistryPromptAdapter
         registry["chemistry_"] = ChemistryPromptAdapter
     except ImportError:
@@ -297,6 +325,12 @@ def _build_adapter_registry() -> dict[str, type[PromptAdapter]]:
     try:
         from researchclaw.domains.adapters.robotics import RoboticsPromptAdapter
         registry["robotics_"] = RoboticsPromptAdapter
+    except ImportError:
+        pass
+    try:
+        from researchclaw.domains.adapters.hep_ph import HEPPhPromptAdapter
+        registry["hep_ph"] = HEPPhPromptAdapter
+        registry["hep_ph_"] = HEPPhPromptAdapter
     except ImportError:
         pass
     return registry
@@ -333,3 +367,30 @@ def get_adapter(domain: DomainProfile) -> PromptAdapter:
 
     # Generic fallback
     return GenericPromptAdapter(domain)
+
+
+def get_adapter_by_id(domain_id: str) -> PromptAdapter:
+    """Convenience wrapper: build a minimal :class:`DomainProfile` for *domain_id*
+    (loading it from the YAML profile registry if available) and dispatch.
+
+    Useful for tests and ad-hoc lookups when only the domain id is known.
+    """
+    # Lazy import to avoid a circular dependency at module load time.
+    from researchclaw.domains.detector import (  # noqa: WPS433
+        DomainProfile,
+        get_profile,
+    )
+
+    profile = get_profile(domain_id)
+    if profile is not None:
+        return get_adapter(profile)
+
+    # Fallback: synthesise a bare profile with just the id so prefix
+    # matching still works.
+    return get_adapter(
+        DomainProfile(
+            domain_id=domain_id,
+            parent_domain=domain_id,
+            display_name=domain_id,
+        )
+    )

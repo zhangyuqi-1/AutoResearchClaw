@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 from urllib.parse import urlparse
+
+
+_SUSPICIOUS_URL_RE = re.compile(r"[\\@]")
 
 
 def check_url_ssrf(url: str) -> str | None:
@@ -16,6 +20,10 @@ def check_url_ssrf(url: str) -> str | None:
 
     Returns ``None`` if the URL is safe to fetch.
     """
+    if "\\" in url:
+        return "Blocked URL containing backslash (potential SSRF bypass)"
+    if "@" in url.split("//", 1)[-1].split("/", 1)[0]:
+        return "Blocked URL containing userinfo (potential SSRF bypass)"
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return f"Unsupported URL scheme: {parsed.scheme}"
